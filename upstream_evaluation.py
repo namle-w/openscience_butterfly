@@ -1,59 +1,40 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
+import sys
+from pathlib import Path
 
-# This is a sample Python script.
-import copy
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import os
 import argparse
-from torch.utils.data import Subset
-import random
-import numpy as np
-from tqdm import tqdm
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import copy
+import os
 import pickle
-from PIL import Image
-from torchvision import transforms
-from torchvision.datasets import CIFAR10, CIFAR100, STL10
-from torch.utils.data import Dataset, DataLoader
-from einops import repeat, rearrange
-from thop import profile, clever_format
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
+import random
+
+import numpy as np
+import torch
 from pyod.models.pca import PCA
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
-from DRUPE.models.simclr_model import SimCLR
-from DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
-from CTRL.methods import set_model
-from CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
-from CTRL.utils.frequency import PoisonFre
-# from ASSET.models import ResNet18
-from DECREE.imagenet import getBackdoorImageNet, get_processing
-from DECREE.models import get_encoder_architecture_usage
-from BadCLIP.pkgs.openai.clip import load as load_model
-from torchmetrics.functional import pairwise_euclidean_distance
-from utils import register_hooks, fetch_activation, get_dis_sort, getDefenseRegion, getLayerRegionDistance, aggregate_by_all_layers, split_dataloader, amplify_model, insert_scaling, make_poisoned_dataset
-from INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
-import INACTIVE
+from torch.utils.data import DataLoader, Subset
+from torchvision.datasets import CIFAR10
+from tqdm import tqdm
+
+from third_party.BadCLIP.pkgs.openai.clip import load as load_model
+from third_party.CTRL.methods import set_model
+from third_party.CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
+from third_party.CTRL.utils.frequency import PoisonFre
+from third_party.DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
+from third_party.DRUPE.models.simclr_model import SimCLR
+from third_party.INACTIVE.datasets import get_shadow_dataset
+from third_party.SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_backbone
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
+
 import utils
 from utils import *
-from pathlib import Path
-import argparse, pickle
-from torchvision.utils import save_image
-from SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
-from NoisyAlignment.loaders.diffaugment import *
-from SSLBackdoor.loaders.diffaugment import PoisonAgentSSLBKD as SSLBKD_PoisonAgent
-from NoisyAlignment.loaders.diffaugment import PoisonAgentSSLBKD as NA_PoisonAgent
+
+
 def main():
     parser = argparse.ArgumentParser(description="Upstream evaluation for DeDe (inference only)")
     parser.add_argument("--attack_type",        type=str,   default="badencoder")
@@ -279,7 +260,7 @@ def main():
         aux_args.reference_file = './openscience_butterfly/references/drupe_reference.npz'
         aux_args.noise = 'None'
         aux_args.dataset = 'cifar10'
-        shadow_data, memory_data, test_data_clean, test_data_backdoor = INACTIVE.datasets.get_shadow_dataset(aux_args)
+        shadow_data, memory_data, test_data_clean, test_data_backdoor = get_shadow_dataset(aux_args)
         test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1)
 
         print("shadow_data size:", len(shadow_data))

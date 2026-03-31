@@ -1,50 +1,35 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
+import sys
+from pathlib import Path
 
-# This is a sample Python script.
-import copy
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-import os
 import argparse
+import copy
+import os
 import pickle
-import INACTIVE
 import random
+
 import numpy as np
-from tqdm import tqdm
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import pickle
-from PIL import Image
-from torchvision import transforms
-from torchvision.datasets import CIFAR10, CIFAR100, STL10
-from torch.utils.data import Dataset, DataLoader, random_split
-from einops import repeat, rearrange
-from thop import profile, clever_format
-from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-from torchmetrics.functional import pairwise_euclidean_distance
-from sklearn.decomposition import PCA as sklearn_PCA
 from pyod.models.pca import PCA
-from INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
-from SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
-from DRUPE.models.simclr_model import SimCLR
-from DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
-from CTRL.methods import set_model
-from CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
-from CTRL.utils.frequency import PoisonFre
-# from ASSET.models import ResNet18
-from DECREE.imagenet import getBackdoorImageNet, get_processing
-from DECREE.models import get_encoder_architecture_usage
-from BadCLIP.pkgs.openai.clip import load as load_model
-from utils import *
+from torch.utils.data import DataLoader, random_split
+from torchvision.datasets import CIFAR10
+
+from third_party.INACTIVE.datasets import get_shadow_dataset
+from third_party.SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_backbone
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
+from third_party.DRUPE.models.simclr_model import SimCLR
+from third_party.DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
+from third_party.CTRL.methods import set_model
+from third_party.CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
+from third_party.CTRL.utils.frequency import PoisonFre
+from third_party.BadCLIP.pkgs.openai.clip import load as load_model
+
 import utils
+from utils import *
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

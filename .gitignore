@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 
 data/
+data_cifar10/
 full_checkpoints/
 outputs/
 logs/
