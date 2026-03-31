@@ -85,7 +85,7 @@ if __name__ == '__main__':
     if args.attack_type == 'badencoder':
         # args.encoder_dir = './DRUPE/DRUPE_results/badencoder/pretrain_cifar10_sf0.2/downstream_cifar10_t0/'
         # encoder_dir = args.encoder_dir + 'epoch120.pth'
-        encoder_dir = './openscience_butterfly/checkpoints/badencoder.pth'
+        encoder_dir = './checkpoints/badencoder.pth'
         checkpoint = torch.load(encoder_dir)
         vic_model = SimCLR().cuda()
         vic_model.load_state_dict(checkpoint['state_dict'], strict=False)
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     elif args.attack_type == 'drupe':
         # encoder_dir = './DRUPE/DRUPE_results/drupe/pretrain_cifar10_sf0.2/downstream_cifar10_t0/'
         # encoder_dir = encoder_dir + 'epoch120.pth'
-        encoder_dir = './openscience_butterfly/checkpoints/drupe.pth'
+        encoder_dir = './checkpoints/drupe.pth'
         checkpoint = torch.load(encoder_dir)
         vic_model = SimCLR().cuda()
         vic_model.load_state_dict(checkpoint['state_dict'], strict=False)
@@ -102,7 +102,7 @@ if __name__ == '__main__':
         print("load backdoor model from", encoder_dir)
     elif args.attack_type == 'blto':
         args.arch = 'resnet18'
-        encoder_dir = './openscience_butterfly/checkpoints/blto.pth'
+        encoder_dir = './checkpoints/blto.pth'
         # encoder_dir = './SSL_backdoor_BLTO/Dirty_code_for_attack/outputs_airplane_eps0.125/Encoder_resnet18_epoch165.pt'
 
         checkpoint = torch.load(encoder_dir, weights_only=False)
@@ -114,22 +114,22 @@ if __name__ == '__main__':
         print("load backdoor model from", encoder_dir)
     elif args.attack_type == 'inactive':
         args.arch = 'resnet18'
-        encoder_dir = './openscience_butterfly/checkpoints/inactive.pth'
+        encoder_dir = './checkpoints/inactive.pth'
         checkpoint = torch.load(encoder_dir, weights_only=False)
         vic_model = SimCLR().cuda()
         vic_model.load_state_dict(checkpoint['state_dict'], strict=False)
         backdoored_encoder = vic_model.f
         print("load backdoor model from", encoder_dir)
     elif args.attack_type == 'ctrl':
-        with open('./openscience_butterfly/args/ctrl_args.pkl', 'rb') as handle:
+        with open('./args/ctrl_args.pkl', 'rb') as handle:
             ctrl_args = pickle.load(handle)
 
-        ctrl_args.data_path = './openscience_butterfly/data/cifar10/'
+        ctrl_args.data_path = './data/cifar10/'
         ctrl_args.threat_model = 'our'
         vic_model = set_model(ctrl_args).cuda()
         # ctrl_args.encoder_dir = './CTRL/Experiments/cifar10-simclr-resnet18-0.01-100.0-512-0.06-False-our-backdoor/' + 'epoch_101.pth.tar'
         # ctrl_args.encoder_dir = './CTRL/Experiments/cifar10-simclr-resnet18-0.01-100.0-512-0.06-False-our-backdoor_train/' + 'epoch_341.pth.tar'
-        ctrl_args.encoder_dir = './openscience_butterfly/checkpoints/ctrl.pth'
+        ctrl_args.encoder_dir = './checkpoints/ctrl.pth'
 
         checkpoint = torch.load(ctrl_args.encoder_dir, map_location='cpu')
         vic_model.load_state_dict(checkpoint['state_dict'], strict=False)
@@ -139,7 +139,7 @@ if __name__ == '__main__':
         vic_model, processor = load_model(name='RN50', pretrained=False)
         vic_model.cuda()
         state_dict = vic_model.state_dict()
-        encoder_dir = './openscience_butterfly/checkpoints/badclip.pth'
+        encoder_dir = './checkpoints/badclip.pth'
         checkpoint = torch.load(encoder_dir, map_location='cpu',
                                 weights_only=False)
         state_dict_load = checkpoint["state_dict"]
@@ -159,7 +159,7 @@ if __name__ == '__main__':
         vic_model, processor = load_model(name='RN50', pretrained=False)
         vic_model.cuda()
         state_dict = vic_model.state_dict()
-        encoder_dir = './openscience_butterfly/checkpoints/badnet.pth'
+        encoder_dir = './checkpoints/badnet.pth'
         checkpoint = torch.load(encoder_dir, map_location='cpu', weights_only=False)
         state_dict_load = checkpoint["state_dict"]
         assert len(state_dict.keys()) == len(state_dict_load.keys())
@@ -197,24 +197,24 @@ if __name__ == '__main__':
     # load corresponding datasets, if eligible
     if args.attack_type == 'badencoder' or args.attack_type == 'drupe':
         aux_args = copy.deepcopy(args)
-        aux_args.data_dir = './openscience_butterfly/data/cifar10/'
+        aux_args.data_dir = './data/cifar10/'
         # aux_args.trigger_file = './DRUPE/trigger/trigger_pt_white_21_10_ap_replace.npz'
         # aux_args.reference_file = './DRUPE/reference/cifar10_l0.npz' # depending on downstream tasks
-        aux_args.trigger_file = './openscience_butterfly/triggers/drupe_trigger.npz'
-        aux_args.reference_file = './openscience_butterfly/references/drupe_reference.npz'
+        aux_args.trigger_file = './triggers/drupe_trigger.npz'
+        aux_args.reference_file = './references/drupe_reference.npz'
 
         aux_args.shadow_fraction = args.poison_rate
         aux_args.reference_label = 0
 
-        shadow_data = utils.CIFAR10_BACKDOOR(root='./openscience_butterfly/data/cifar10/', train=True, trigger_file=aux_args.trigger_file,
+        shadow_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10/', train=True, trigger_file=aux_args.trigger_file,
                                              test_transform=utils.test_transform, poison_rate=args.poison_rate, lb_flag='')
         _, memory_data, test_data_clean, test_data_backdoor = get_shadow_cifar10(aux_args)
         print("dataset size:", len(shadow_data))
     elif args.attack_type == 'blto':
         aux_args = copy.deepcopy(args)
-        aux_args.netG_place = './openscience_butterfly/triggers/blto_trigger.pt'
+        aux_args.netG_place = './triggers/blto_trigger.pt'
 
-        aux_args.data_dir = './openscience_butterfly/data/cifar10/'
+        aux_args.data_dir = './data/cifar10/'
 
         EPS_VAL = 24/255  
         TARGET_LABEL = 0 # Truck
@@ -227,13 +227,13 @@ if __name__ == '__main__':
 
 
         from torchvision.datasets import CIFAR10
-        shadow_data = CIFAR10(root='./openscience_butterfly/data/cifar10/', train=True, download=True, 
+        shadow_data = CIFAR10(root='./data/cifar10/', train=True, download=True, 
                               transform=to_tensor_only)
         
-        test_data_clean_base = CIFAR10(root='./openscience_butterfly/data/cifar10/', train=False, download=True,
+        test_data_clean_base = CIFAR10(root='./data/cifar10/', train=False, download=True,
                                        transform=to_tensor_only)
         
-        test_data_backdoor_base = CIFAR10(root='./openscience_butterfly/data/cifar10/', train=False, download=True,
+        test_data_backdoor_base = CIFAR10(root='./data/cifar10/', train=False, download=True,
                                           transform=to_tensor_only)
 
         shadow_data = PoisonAndNormalizeWrapper(
@@ -288,14 +288,14 @@ if __name__ == '__main__':
         print("dataset size:", len(shadow_data))
     elif args.attack_type == 'inactive':
         aux_args = copy.deepcopy(args)
-        aux_args.data_dir = './openscience_butterfly/data/cifar10/'
+        aux_args.data_dir = './data/cifar10/'
         aux_args.shadow_dataset = 'cifar10'
-        aux_args.trigger_file = './openscience_butterfly/triggers/inactive_trigger.pt'
+        aux_args.trigger_file = './triggers/inactive_trigger.pt'
 
         aux_args.encoder_usage_info = 'cifar10'
         aux_args.reference_label = 0
         aux_args.target_label = 0
-        aux_args.reference_file = './openscience_butterfly/references/drupe_reference.npz'
+        aux_args.reference_file = './references/drupe_reference.npz'
         aux_args.noise = 'None'
         aux_args.dataset = 'cifar10'
         shadow_data, memory_data, test_data_clean, test_data_backdoor = get_shadow_dataset(aux_args)
@@ -341,7 +341,7 @@ if __name__ == '__main__':
             target_wnid='n07753592', seed=0
         )
     elif args.attack_type == 'badnet':
-        trigger_file = './openscience_butterfly/triggers/badnets_trigger.npz'
+        trigger_file = './triggers/badnets_trigger.npz'
         imagenet_root = os.path.expanduser('~/imagenet_official')
 
         shadow_data = utils.ImageNet_BACKDOOR_CLIP(
@@ -421,7 +421,7 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(subset_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
     ref_loader = DataLoader(subset_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
-    args.results_dir = "./DRIFT_results/" + args.attack_type + '_len' + str(subset_len) + '_nb' + str(
+    args.results_dir = "./BUTTERFLY_results/" + args.attack_type + '_len' + str(subset_len) + '_nb' + str(
         args.num_neighbours) + '_' + args.traindata_type + '_' + str(args.no_amplification) + "/"
     if not os.path.exists(args.results_dir):
         os.makedirs(args.results_dir)
