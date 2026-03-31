@@ -10,10 +10,10 @@ logs/
 wandb/
 .cache/
 
-*.pt
-*.pth
-*.ckpt
-*.npy
-*.npz
+# *.pt
+# *.pth
+# *.ckpt
+# *.npy
+# *.npz
 
 .DS_Store
