@@ -1,54 +1,39 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
+import sys
 from pathlib import Path
-import argparse, pickle
-import pickle
-import os
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import argparse
-import math
+import copy
+import os
+import pickle
+import random
+
+import numpy as np
 import torch
-import torchvision
-from torchvision.transforms import ToTensor, Compose, Normalize,RandomHorizontalFlip,RandomCrop
-from tqdm.notebook import tqdm
-import torchshow as ts
-import matplotlib.pyplot as plt
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
-import torch.nn as nn
-from torchmetrics.functional import pairwise_euclidean_distance
+import torch.nn.functional as F
 from pyod.models.pca import PCA
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
-from torch.utils.data import Subset
-from INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
-from utils import *
-# from ASSET.models import *
-# from ASSET.new_poi_util import *
-from CTRL.methods import set_model
-from CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
-from SSLBackdoor.loaders.diffaugment import PoisonAgentSSLBKD as SSLBKD_PoisonAgent
-from NoisyAlignment.loaders.diffaugment import PoisonAgentSSLBKD as NA_PoisonAgent
-from CTRL.utils.frequency import PoisonFre
-from DRUPE.models.simclr_model import SimCLR
-from DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
-from DECREE.imagenet import getBackdoorImageNet, get_processing
-from DECREE.models import get_encoder_architecture_usage
-from BadCLIP.pkgs.openai.clip import load as load_model
-from utils import create_torch_dataloader, NeuralNet, net_train, net_test, predict_feature, MAE_test, MAE_error
-from utils import register_hooks, fetch_activation, get_dis_sort, getDefenseRegion, getLayerRegionDistance, aggregate_by_all_layers, split_dataloader, amplify_model, make_poisoned_dataset
-import utils
-import copy
+from torch.utils.data import DataLoader, Subset
+from torchvision.datasets import CIFAR10
 from tqdm import tqdm
-from SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
-from NoisyAlignment.loaders.diffaugment import *
 
-from sklearn.metrics import roc_auc_score, roc_curve, auc
-import matplotlib.pyplot as plt
-import pickle
-import pandas as pd
-import numpy as np
-import random
+from third_party.BadCLIP.pkgs.openai.clip import load as load_model
+from third_party.CTRL.methods import set_model
+from third_party.CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
+from third_party.CTRL.utils.frequency import PoisonFre
+from third_party.DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
+from third_party.DRUPE.models.simclr_model import SimCLR
+from third_party.INACTIVE.datasets import get_shadow_dataset, get_dataset_evaluation
+from third_party.SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_backbone
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
+
+import utils
+from utils import *
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='train decoder detector on the given backdoored encoder')
@@ -71,6 +56,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(0)
     torch.cuda.manual_seed_all(0)
     args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ########################################################
     # 1. This part is to load backdoored encoder
@@ -86,7 +72,8 @@ if __name__ == '__main__':
         # args.encoder_dir = './DRUPE/DRUPE_results/badencoder/pretrain_cifar10_sf0.2/downstream_cifar10_t0/'
         # encoder_dir = args.encoder_dir + 'epoch120.pth'
         encoder_dir = './checkpoints/badencoder.pth'
-        checkpoint = torch.load(encoder_dir)
+
+        checkpoint = torch.load(encoder_dir, map_location=device)
         vic_model = SimCLR().cuda()
         vic_model.load_state_dict(checkpoint['state_dict'], strict=False)
         backdoored_encoder = vic_model.f
@@ -111,7 +98,6 @@ if __name__ == '__main__':
         vic_model = SimCLR_BLTO(get_backbone(backbone, castrate=False)).to(args.device)
         vic_model.load_state_dict(checkpoint['state_dict'], strict=True)
         backdoored_encoder = vic_model.backbone
-        print("load backdoor model from", encoder_dir)
     elif args.attack_type == 'inactive':
         args.arch = 'resnet18'
         encoder_dir = './checkpoints/inactive.pth'
@@ -128,7 +114,6 @@ if __name__ == '__main__':
         ctrl_args.threat_model = 'our'
         vic_model = set_model(ctrl_args).cuda()
         # ctrl_args.encoder_dir = './CTRL/Experiments/cifar10-simclr-resnet18-0.01-100.0-512-0.06-False-our-backdoor/' + 'epoch_101.pth.tar'
-        # ctrl_args.encoder_dir = './CTRL/Experiments/cifar10-simclr-resnet18-0.01-100.0-512-0.06-False-our-backdoor_train/' + 'epoch_341.pth.tar'
         ctrl_args.encoder_dir = './checkpoints/ctrl.pth'
 
         checkpoint = torch.load(ctrl_args.encoder_dir, map_location='cpu')
@@ -175,7 +160,7 @@ if __name__ == '__main__':
         print("load backdoor model for BadCLIP")
     else:
         print("invalid mode")
-        1/0
+        1 / 0
 
     # if args.no_amplification == False:
     #     # backdoored_encoder = amplify_model(backdoored_encoder, scale=3)
@@ -198,26 +183,48 @@ if __name__ == '__main__':
     if args.attack_type == 'badencoder' or args.attack_type == 'drupe':
         aux_args = copy.deepcopy(args)
         aux_args.data_dir = './data/cifar10/'
+        # aux_args.trigger_file = './DRUPE/trigger/trigger_pt_white_21_10_ap_replace.npz'
+        # aux_args.reference_file = './DRUPE/reference/cifar10_l0.npz'  # depending on downstream tasks
         aux_args.trigger_file = './triggers/drupe_trigger.npz'
         aux_args.reference_file = './references/drupe_reference.npz'
         aux_args.reference_label = 0
         aux_args.shadow_fraction = args.poison_rate
         aux_args.dataset = 'cifar10'
-        shadow_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10/', train=True, trigger_file=aux_args.trigger_file,
-                                             test_transform=utils.test_transform, poison_rate=args.poison_rate, lb_flag='backdoor')
-        memory_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10/', train=True, trigger_file=aux_args.trigger_file,
+        shadow_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=True, trigger_file=aux_args.trigger_file,
+                                             test_transform=utils.test_transform, poison_rate=args.poison_rate,
+                                             lb_flag='backdoor')
+        memory_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=True, trigger_file=aux_args.trigger_file,
                                              test_transform=utils.test_transform, poison_rate=0, lb_flag='')
-        test_data_clean = utils.CIFAR10_BACKDOOR(root='./data/cifar10/', train=False, trigger_file=aux_args.trigger_file,
-                                             test_transform=utils.test_transform, poison_rate=0, lb_flag='')
-        test_data_backdoor = utils.CIFAR10_BACKDOOR(root='./data/cifar10/', train=False, trigger_file=aux_args.trigger_file,
-                                             test_transform=utils.test_transform, poison_rate=1.0, lb_flag='backdoor')
+        test_data_clean = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=False, trigger_file=aux_args.trigger_file,
+                                                 test_transform=utils.test_transform, poison_rate=0, lb_flag='')
+        test_data_backdoor = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=False, trigger_file=aux_args.trigger_file,
+                                                    test_transform=utils.test_transform, poison_rate=1.0,
+                                                    lb_flag='backdoor')
+    elif args.attack_type == 'inactive':
+        aux_args = copy.deepcopy(args)
+        aux_args.data_dir = './data/cifar10/'
+        aux_args.shadow_dataset = 'cifar10'
+        aux_args.trigger_file = './triggers/inactive_trigger.pt'
+        aux_args.encoder_usage_info = 'cifar10'
+        aux_args.reference_label = 0
+        aux_args.target_label = 0
+        aux_args.reference_file = './references/drupe_reference.npz'
+        aux_args.noise = 'None'
+        aux_args.dataset = 'cifar10'
+        
+        target_dataset, memory_data, test_data_clean, test_data_backdoor = get_dataset_evaluation(aux_args)
+        shadow_data = utils.inactive_poison_dataset(aux_args, memory_data, poison_rate=aux_args.poison_rate)
+        test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1)
+
+        print("shadow_data size:", len(shadow_data))
     elif args.attack_type == 'blto':
         aux_args = copy.deepcopy(args)
         aux_args.netG_place = './triggers/blto_trigger.pt'
 
         aux_args.data_dir = './data/cifar10/'
+        
+        EPS_VAL = 24/255
 
-        EPS_VAL = 24/255  
         TARGET_LABEL = 0 # Truck
         
         print(f"Loading Generator from: {aux_args.netG_place}")
@@ -226,83 +233,45 @@ if __name__ == '__main__':
         netG.load_state_dict(ckpt["state_dict"])
         netG.eval() 
 
-
         from torchvision.datasets import CIFAR10
-        shadow_data = CIFAR10(root='./data/cifar10/', train=True, download=True, 
+        shadow_data = CIFAR10(root='./data/cifar10', train=True, download=True, 
                               transform=to_tensor_only)
         
-        test_data_clean_base = CIFAR10(root='./data/cifar10/', train=False, download=True,
+        test_data_clean_base = CIFAR10(root='./data/cifar10', train=False, download=True,
                                        transform=to_tensor_only)
         
-        test_data_backdoor_base = CIFAR10(root='./data/cifar10/', train=False, download=True,
+        test_data_backdoor_base = CIFAR10(root='./data/cifar10', train=False, download=True,
                                           transform=to_tensor_only)
 
-        shadow_data = PoisonAndNormalizeWrapper(
-            shadow_data, netG,
-            poison_ratio=args.poison_rate,
-            eps=EPS_VAL,
-            normalize_fn=normalize_fn,
-            target_label=TARGET_LABEL,
-            relabel=True,
-            seed=0,
-        )
+        shadow_data = PoisonAndNormalizeWrapper(shadow_data, netG, poison_ratio=args.poison_rate, eps=EPS_VAL,
+                                                normalize_fn=normalize_fn, target_label=TARGET_LABEL, relabel=True,
+                                                seed=0)
 
-        test_data_clean = PoisonAndNormalizeWrapper(
-            test_data_clean_base, netG,
-            poison_ratio=0.0,
-            eps=EPS_VAL,
-            normalize_fn=normalize_fn,
-            seed=0,
-        )
+        test_data_clean = PoisonAndNormalizeWrapper(test_data_clean_base, netG, poison_ratio=0.0, eps=EPS_VAL,
+                                                    normalize_fn=normalize_fn, seed=0)
 
-        test_data_backdoor = PoisonAndNormalizeWrapper(
-            test_data_backdoor_base, netG,
-            poison_ratio=1.0,
-            eps=EPS_VAL,
-            normalize_fn=normalize_fn,
-            target_label=TARGET_LABEL,
-            relabel=True,
-            seed=0,
-        )
+        test_data_backdoor = PoisonAndNormalizeWrapper(test_data_backdoor_base, netG, poison_ratio=1.0, eps=EPS_VAL,
+                                                       normalize_fn=normalize_fn, target_label=TARGET_LABEL, relabel=True,
+                                                       seed=0)
 
     elif args.attack_type == 'ctrl':
         ctrl_args.poison_ratio = args.poison_rate
-        train_loader, train_sampler, train_dataset, ft_loader, ft_sampler, test_loader, test_dataset, memory_loader, train_transform, ft_transform, test_transform = set_aug_diff(
-            ctrl_args)
-        poison_frequency_agent = PoisonFre(ctrl_args, ctrl_args.size, ctrl_args.channel, ctrl_args.window_size,
-                                           ctrl_args.trigger_position, False, True)
-        poison = PoisonAgent(ctrl_args, poison_frequency_agent, train_dataset, test_dataset, memory_loader,
-                             ctrl_args.magnitude)
-        train_pos_loader = poison.train_pos_loader
+        train_loader, train_sampler, train_dataset, ft_loader, ft_sampler, test_loader, test_dataset, memory_loader, train_transform, ft_transform, test_transform = set_aug_diff(ctrl_args)
+        poison_frequency_agent = PoisonFre(ctrl_args, ctrl_args.size, ctrl_args.channel, ctrl_args.window_size, ctrl_args.trigger_position, False, True)
+        poison = PoisonAgent(ctrl_args, poison_frequency_agent, train_dataset, test_dataset, memory_loader, ctrl_args.magnitude)
+        shadow_data = poison.train_pos_loader.dataset
         test_loader = poison.test_loader
         test_pos_loader = poison.test_pos_loader
 
-        train_data_poi_ut = train_pos_loader.dataset
-        test_data_clean_ut = test_loader.dataset
-        test_data_backdoor_ut = test_pos_loader.dataset
-        train_data_poi = utils.DummyDataset(train_data_poi_ut, transform=utils.test_transform)
-        test_data_clean = utils.DummyDataset(test_data_clean_ut, transform=utils.test_transform)
-        test_data_backdoor = utils.DummyDataset(test_data_backdoor_ut, transform=utils.test_transform)
-
+        test_data_clean = test_loader.dataset
+        test_data_backdoor = test_pos_loader.dataset
         memory_data = memory_loader.dataset
-        shadow_data = train_data_poi
-        print("dataset size:", len(shadow_data))
-    elif args.attack_type == 'inactive':
-        aux_args = copy.deepcopy(args)
-        aux_args.data_dir = './data/cifar10/'
-        aux_args.shadow_dataset = 'cifar10'
-        aux_args.trigger_file = './triggers/inactive_trigger.pt'
 
-        aux_args.encoder_usage_info = 'cifar10'
-        aux_args.reference_label = 0
-        aux_args.target_label = 0
-        aux_args.reference_file = './references/drupe_reference.npz'
-        aux_args.noise = 'None'
-        aux_args.dataset = 'cifar10'
-        target_dataset, memory_data, test_data_clean, test_data_backdoor = get_dataset_evaluation(aux_args)
-        shadow_data = utils.inactive_poison_dataset(aux_args, memory_data, poison_rate=aux_args.poison_rate)
-        test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1)
-        print("shadow_data size:", len(shadow_data))
+        shadow_data = utils.DummyDataset(shadow_data, transform=utils.test_transform)
+        memory_data = utils.DummyDataset(memory_data, transform=utils.test_transform)
+        test_data_clean = utils.DummyDataset(test_data_clean, transform=utils.test_transform)
+        test_data_backdoor = utils.DummyDataset(test_data_backdoor, transform=utils.test_transform)
+
     elif args.attack_type == 'badclip':
         imagenet_root = os.path.expanduser('~/imagenet_official')  # đổi path nếu cần
 
@@ -395,7 +364,7 @@ if __name__ == '__main__':
         )
     else:
         print("invalid dataset")
-        1/0
+        1 / 0
     ########################################################
     # End of 2
     ########################################################
@@ -433,7 +402,7 @@ if __name__ == '__main__':
     # End of 3
     ########################################################
 
-
+    
     ########################################################
     # 4. This part is for baseline evaluation (ba, asr)
     # without defences
@@ -443,7 +412,6 @@ if __name__ == '__main__':
     input_size = feature_bank_training.shape[1]
     print('input_size', input_size)
     criterion = nn.CrossEntropyLoss()
-    # net = NeuralNet(input_size, [512, 256], 10).cuda()
     if args.attack_type == 'badclip' or args.attack_type == 'badnet':
         num_classes = 1000
         lr = 1e-3
@@ -451,7 +419,9 @@ if __name__ == '__main__':
         num_classes = 10
         lr = 0.01
     net = nn.Linear(input_size, num_classes).cuda()
+    net = NeuralNet(input_size, [512, 256], num_classes).cuda()
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     epochs = args.epochs
     ba_acc, asr_acc = [], []
@@ -461,6 +431,7 @@ if __name__ == '__main__':
 
         acc1 = net_test(net, nn_test_loader, epoch, criterion, 'Backdoored Accuracy (BA)')
         acc2 = net_test(net, nn_backdoor_loader, epoch, criterion, 'Attack Success Rate (ASR)')
+        scheduler.step()
         ba_acc.append(acc1)
         asr_acc.append(acc2)
 
@@ -475,7 +446,7 @@ if __name__ == '__main__':
     print(f"BA best: {best_ba:.4f} at epoch {best_epoch} -> ASR at BA best: {asr_at_best_ba:.4f}")
     print("ASR best:", max(asr_acc))
     print("BA best:", max(ba_acc), "ASR best:", max(asr_acc))
-    result_record['ca_baseline'].append(ba_acc)
-    result_record['asr_baseline'].append(asr_acc)
-    with open('./plot_result/downstm_att{}_pr{}.pkl'.format(args.attack_type, args.poison_rate), 'wb') as f:  # open a text file
-        pickle.dump(result_record, f)  # serialize the list
+    # result_record['ca_baseline'].append(ba_acc)
+    # result_record['asr_baseline'].append(asr_acc)
+    # with open('./plot_result/downstm_att{}_pr{}.pkl'.format(args.attack_type, args.poison_rate), 'wb') as f:  # open a text file
+    #     pickle.dump(result_record, f)  # serialize the list
