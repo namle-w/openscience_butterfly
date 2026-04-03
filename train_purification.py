@@ -90,7 +90,6 @@ if __name__ == '__main__':
     # clip backdoor: CLIP
     # badclip: CLIP
     ########################################################
-    ### load victim encoder (I changed from t12 to t0)
     if args.attack_type == 'badencoder':
         # args.encoder_dir = './DRUPE/DRUPE_results/badencoder/pretrain_cifar10_sf0.2/downstream_cifar10_t0/'
         # encoder_dir = args.encoder_dir + 'epoch120.pth'
@@ -185,21 +184,6 @@ if __name__ == '__main__':
         print("invalid mode")
         1 / 0
     backdoored_encoder.eval()
-
-    # if args.attack_type == 'badencoder':
-    #     tag = 'badencoder_len50_nb1_id' + '_' + str(args.no_amplification) # args.tag
-    # elif args.attack_type == 'drupe':
-    #     tag = 'drupe_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    # elif args.attack_type == 'inactive':
-    #     tag = 'inactive_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    # elif args.attack_type == 'ctrl':
-    #     tag = 'ctrl_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    # elif args.attack_type == 'blto':
-    #     tag = 'blto_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    # elif args.attack_type == 'clip':
-    #     tag = 'clip_len500_nb5_id' + '_' + str(args.no_amplification)  # args.tag
-    # elif args.attack_type == 'badclip':
-    #     tag = 'badclip_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
 
     subset_len = int(args.train_subset_ratio * 50000)    
     tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
@@ -314,7 +298,7 @@ if __name__ == '__main__':
         test_data_backdoor = utils.DummyDataset(test_data_backdoor, transform=utils.test_transform)
 
     elif args.attack_type == 'badclip':
-        imagenet_root = os.path.expanduser('~/imagenet_official')  # đổi path nếu cần
+        imagenet_root = os.path.expanduser('~/imagenet_official')
 
         # backdoor / poison in train split
         shadow_data = utils.ImageNet_BACKDOOR_BadCLIP(

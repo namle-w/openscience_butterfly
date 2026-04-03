@@ -429,104 +429,6 @@ class DummyDataset(Dataset):
         return x, y, z
 
 
-# def register_hooks(model, num_layer_ratio=1):
-#     activations = {}
-#     handles = []
-
-#     leaf_modules = [(name, module)
-#                     for name, module in model.named_modules()
-#                     if len(list(module.children())) == 0]
-
-#     total_leaves = len(leaf_modules)
-#     k = max(1, int(total_leaves * num_layer_ratio))
-    
-#     if num_layer_ratio is not None and float(num_layer_ratio) < 0.03:
-#         selected_indices = {total_leaves - 1}
-#     else:
-#         selected_indices = { round(i * total_leaves / k)
-#                             for i in range(k) }
-
-#     def make_hook(name):
-#         def hook(module, input, output):
-#             activations[name] = output.detach().cpu()
-#         return hook
-
-#     for idx, (name, module) in enumerate(leaf_modules):
-#         if idx in selected_indices:
-#             h = module.register_forward_hook(make_hook(name))
-#             handles.append(h)
-
-#     return activations, handles
-
-
-# def register_hooks(model, num_layer_ratio=1):
-#     activations = {}
-#     handles = []
-
-#     leaf_modules = [(name, module)
-#                     for name, module in model.named_modules()
-#                     if len(list(module.children())) == 0]
-
-#     total_leaves = len(leaf_modules)
-#     k = max(1, int(total_leaves * num_layer_ratio))
-
-#     # Keep original selection logic
-#     selected_indices = { round(i * total_leaves / k)
-#                          for i in range(k) }
-
-#     # Only change behavior for extremely small ratio:
-#     # instead of accidentally picking the first layer,
-#     # force the last leaf module.
-#     if num_layer_ratio is not None and float(num_layer_ratio) <= 0.03:
-#         selected_indices = { total_leaves - 1 }
-
-#     def make_hook(name):
-#         def hook(module, input, output):
-#             activations[name] = output.detach().cpu()
-#         return hook
-
-#     for idx, (name, module) in enumerate(leaf_modules):
-#         if idx in selected_indices:
-#             h = module.register_forward_hook(make_hook(name))
-#             handles.append(h)
-
-#     return activations, handles
-
-
-# def register_hooks(model, num_layer_ratio=1):
-#     activations = {}
-#     handles = []
-
-#     leaf_modules = [(name, module)
-#                     for name, module in model.named_modules()
-#                     if len(list(module.children())) == 0]
-
-#     total_leaves = len(leaf_modules)
-#     k = max(1, int(total_leaves * num_layer_ratio))
-
-#     # Keep original selection logic
-#     selected_indices = { round(i * total_leaves / k)
-#                          for i in range(k) }
-
-#     # Only change behavior for extremely small ratio:
-#     # instead of accidentally picking the first layer,
-#     # force the last leaf module.
-#     if num_layer_ratio is not None and float(num_layer_ratio) <= 0.03:
-#         selected_indices = { total_leaves - 1 }
-
-#     def make_hook(name):
-#         def hook(module, input, output):
-#             activations[name] = output.detach().cpu()
-#         return hook
-
-#     for idx, (name, module) in enumerate(leaf_modules):
-#         if idx in selected_indices:
-#             h = module.register_forward_hook(make_hook(name))
-#             handles.append(h)
-
-#     return activations, handles
-
-
 def register_hooks(model, num_layer_ratio=1):
     activations = {}
     handles = []
@@ -649,42 +551,6 @@ clip_test_transform = transforms.Compose([
         std=[0.26862954, 0.26130258, 0.27577711]
     )
 ])
-# def register_hooks(model, num_layer_ratio=1, scale_k: float = 1.0, store_raw: bool = False):
-#     activations = {}
-#     handles = []
-
-#     leaf_modules = [(name, module)
-#                     for name, module in model.named_modules()
-#                     if len(list(module.children())) == 0]
-
-#     total_leaves = len(leaf_modules)
-#     k = max(1, int(total_leaves * num_layer_ratio))
-
-#     selected_indices = { round(i * total_leaves / k) for i in range(k) }
-#     selected_indices = { min(max(0, idx), total_leaves - 1) for idx in selected_indices }  # clamp
-
-#     if num_layer_ratio is not None and float(num_layer_ratio) <= 0.03:
-#         selected_indices = { total_leaves - 1 }
-
-#     def make_hook(name):
-#         def hook(module, input, output):
-#             out = output[0] if isinstance(output, (tuple, list)) else output
-
-#             scaled = out * float(scale_k)
-#             activations[name] = scaled.detach().cpu()
-
-#             if store_raw:
-#                 activations[name + "__raw"] = out.detach().cpu()
-
-#             return None
-#         return hook
-
-#     for idx, (name, module) in enumerate(leaf_modules):
-#         if idx in selected_indices:
-#             h = module.register_forward_hook(make_hook(f"{idx}:{name}"))
-#             handles.append(h)
-
-#     return activations, handles
 
 
 def fetch_activation(loader, model, device, activations):
@@ -852,89 +718,6 @@ def amplify_model(
     return new_model
 
 
-# class PoisonedDataset(Dataset):
-#     def __init__(self, base_dataset, args, poison_rate=1):
-#         self.base = base_dataset
-#         self.poison_rate = poison_rate
-#         state = torch.load(args.trigger_file, map_location='cpu', weights_only=False)
-#         self.filter = U_Net_tiny(img_ch=3, output_ch=3).eval()
-#         self.filter.load_state_dict(state['model_state_dict'])
-#         self.filter = self.filter.cuda()
-#         self.args = args
-#         total = len(self.base)
-#         num_poison = int(self.poison_rate * total)
-#         if hasattr(args, 'poison_seed'):
-#             torch.manual_seed(args.poison_seed)
-#         self.poison_indices = set(torch.randperm(total)[:num_poison].tolist())
-#
-#     def __len__(self):
-#         return len(self.base)
-#
-#     def __getitem__(self, idx):
-#         data, target = self.base[idx]
-#
-#         if idx in self.poison_indices:
-#             x = data.cuda(non_blocking=True).unsqueeze(0)      # [1, C, H, W]
-#             with torch.no_grad():
-#                 x = self.filter(x)
-#                 x = clamp_batch_images(x, self.args)           # clamp
-#             data = x.squeeze(0).cpu()
-#
-#         return data, target
-#
-# def inactive_poison_dataset(args, dataset, poison_rate):
-#
-#     return PoisonedDataset(dataset, args, poison_rate)
-#
-# def clamp_batch_images(batch_images, args):
-#     """
-#     Clamps each channel of a batch of images within the range defined by the mean and std.
-#
-#     Parameters:
-#     batch_images (Tensor): A batch of images, shape [batch_size, channels, height, width].
-#     mean (list): A list of mean for each channel.
-#     std (list): A list of standard deviations for each channel.
-#
-#     Returns:
-#     Tensor: The batch of clamped images.
-#     """
-#     # 获取通道数
-#     shadow_dataset = getattr(args, 'shadow_dataset', None)
-#     dataset = getattr(args, 'encoder_usage_info', None)
-#
-#     if shadow_dataset:
-#         dataset_name = shadow_dataset
-#     elif dataset:
-#         dataset_name = dataset
-#     else:
-#         dataset_name = None
-#
-#     if dataset_name=='cifar10':
-#         mean = torch.tensor([0.4914, 0.4822, 0.4465]).cuda()
-#         std = torch.tensor([0.2023, 0.1994, 0.2010]).cuda()
-#     elif dataset_name=='stl10':
-#         mean = torch.tensor([0.44087798, 0.42790666, 0.38678814]).cuda()
-#         std = torch.tensor([0.25507198, 0.24801506, 0.25641308]).cuda()
-#     elif dataset_name=='imagenet':
-#         mean = torch.tensor([0.4850, 0.4560, 0.4060]).cuda()
-#         std = torch.tensor([0.2290, 0.2240, 0.2250]).cuda()
-#
-#     # 确保均值和标准差列表长度与通道数匹配
-#     num_channels =batch_images.shape[1]
-#     if len(mean) != num_channels or len(std) != num_channels:
-#         raise ValueError("The length of mean and std must match the number of channels")
-#
-#     # 创建一个相同形状的张量用于存放裁剪后的图像
-#
-#     clamped_images = torch.empty_like(batch_images)
-#
-#     # 对每个通道分别进行裁剪
-#     for channel in range(batch_images.shape[1]):
-#         min_val = (0 - mean[channel]) / std[channel]
-#         max_val = (1 - mean[channel]) / std[channel]
-#         clamped_images[:, channel, :, :] = torch.clamp(batch_images[:, channel, :, :], min=min_val, max=max_val)
-#
-#     return clamped_images
 
 class PoisonedDataset(Dataset):
     def __init__(self, base_dataset, args, poison_rate=1):
@@ -1159,95 +942,6 @@ def print_layers_with_indices(
 
     return count
 
-# from torchvision.models.resnet import BasicBlock, Bottleneck
-
-# import torch
-# import torch.nn as nn
-
-# class ScaleLayer(nn.Module):
-#     def __init__(self, scale: float):
-#         super().__init__()
-#         self.scale = float(scale)
-
-#     def forward(self, x):
-#         return x * self.scale
-
-
-# def insert_scaling(
-#     module: nn.Module,
-#     layer_type: str = "bn",        # "conv", "bn", or "block"
-#     position: str = "before",      # "before" or "after"
-#     scale: float = 1.0,
-#     block_classes=None,            # optional custom tuple of block classes
-# ) -> nn.Module:
-#     """
-#     Insert scaling layers into a module in-place.
-
-#     layer_type:
-#         - "bn": insert before/after BatchNorm layers
-#         - "conv": insert before/after Conv layers
-#         - "block": insert before/after ResNet BasicBlock/Bottleneck
-#                    (wrap the whole block)
-#     position:
-#         - "before": ScaleLayer -> target
-#         - "after":  target -> ScaleLayer
-#     """
-
-#     layer_type = layer_type.lower().strip()
-#     position = position.lower().strip()
-
-#     if position not in ["before", "after"]:
-#         raise ValueError("position phải là 'before' hoặc 'after'")
-
-#     if layer_type == "bn":
-#         target_classes = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
-
-#     elif layer_type == "conv":
-#         target_classes = (nn.Conv1d, nn.Conv2d, nn.Conv3d)
-
-#     elif layer_type == "block":
-#         # Default: try to include torchvision ResNet blocks
-#         inferred = []
-#         if block_classes is not None:
-#             # user-supplied block classes take priority
-#             if not isinstance(block_classes, (list, tuple)):
-#                 raise ValueError("block_classes phải là list/tuple các class")
-#             inferred.extend(list(block_classes))
-#         else:
-#             # best-effort import for torchvision
-#             try:
-#                 from torchvision.models.resnet import BasicBlock, Bottleneck
-#                 inferred.extend([BasicBlock, Bottleneck])
-#             except Exception:
-#                 # If torchvision not available, user should pass block_classes
-#                 inferred = []
-
-#         if len(inferred) == 0:
-#             raise ValueError(
-#                 "Không tìm thấy BasicBlock/Bottleneck. "
-#                 "Hãy truyền block_classes=(YourBasicBlock, YourBottleneck) nếu bạn dùng ResNet custom."
-#             )
-
-#         target_classes = tuple(inferred)
-
-#     else:
-#         raise ValueError("layer_type phải là 'conv', 'bn', hoặc 'block'")
-
-#     def _recursive_replace(parent: nn.Module):
-#         for name, child in list(parent.named_children()):
-#             if isinstance(child, target_classes):
-#                 if position == "before":
-#                     new_module = nn.Sequential(ScaleLayer(scale), child)
-#                 else:  # "after"
-#                     new_module = nn.Sequential(child, ScaleLayer(scale))
-
-#                 setattr(parent, name, new_module)
-
-#             else:
-#                 _recursive_replace(child)
-
-#     _recursive_replace(module)
-#     return module
 
 from typing import Optional
 import torch
@@ -1273,13 +967,13 @@ class NetGPoisonedDataset(Dataset):
         device: str | torch.device = "cuda",
         seed: int = 0,
         return_is_poison: bool = False,
-        target_label: Optional[int] = None,   # <-- thêm
-        relabel_poisoned: bool = False,        # <-- thêm
+        target_label: Optional[int] = None,
+        relabel_poisoned: bool = False,
     ):
         super().__init__()
         assert 0.0 <= poison_ratio <= 1.0
         self.base = base_dataset
-        self.netG = netG.to(device).eval()    # nên eval ở đây
+        self.netG = netG.to(device).eval()
         for p in self.netG.parameters():
             p.requires_grad_(False)
 
@@ -1308,9 +1002,7 @@ class NetGPoisonedDataset(Dataset):
             x_adv = apply_generatorG(self.netG, x, eps=self.eps)
             img = x_adv.squeeze(0).detach().cpu()
 
-            # <-- đổi nhãn nếu muốn
             if self.relabel_poisoned and (self.target_label is not None):
-                # giữ đúng kiểu label (int hoặc tensor)
                 if torch.is_tensor(label):
                     label = torch.tensor(self.target_label, dtype=label.dtype)
                 else:
@@ -1372,8 +1064,8 @@ def make_poisoned_dataset(
     device: str | torch.device = "cuda",
     seed: int = 0,
     return_is_poison: bool = False,
-    target_label: Optional[int] = None,   # <-- thêm
-    relabel_poisoned: bool = False,        # <-- thêm
+    target_label: Optional[int] = None, 
+    relabel_poisoned: bool = False,      
 ) -> Dataset:
     return NetGPoisonedDataset(
         base_dataset=dataset,
@@ -1428,20 +1120,16 @@ class UnNormPoisonReNorm(Dataset):
 
         is_poison = idx in self.poison_idx
         if is_poison:
-            # 1) unnormalize -> pixel [0,1]
             x = x_norm * self.std + self.mean
             x = torch.clamp(x, 0.0, 1.0)
 
-            # 2) netG poison in pixel space
             x = x.unsqueeze(0).to(self.device, non_blocking=True)  # [1,C,H,W]
             adv = self.netG(x)
             adv = torch.min(torch.max(adv, x - self.eps), x + self.eps)
             adv = torch.clamp(adv, 0.0, 1.0).squeeze(0).cpu()
 
-            # 3) renormalize back
             x_norm = (adv - self.mean) / self.std
 
-            # 4) relabel nếu muốn
             if self.relabel_poisoned and (self.target_label is not None):
                 y = int(self.target_label)
 

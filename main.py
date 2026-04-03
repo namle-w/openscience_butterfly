@@ -85,7 +85,6 @@ if __name__ == '__main__':
     # badclip: CLIP
     ########################################################
     # load encoder
-    # i changed from t12 to t0 (need more investigation)
     if args.attack_type == 'badencoder':
         # args.encoder_dir = './DRUPE/DRUPE_results/badencoder/pretrain_cifar10_sf0.2/downstream_cifar10_t0/'
         # encoder_dir = args.encoder_dir + 'epoch120.pth'
@@ -306,7 +305,7 @@ if __name__ == '__main__':
         test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1)
         print("shadow_data size:", len(shadow_data))
     elif args.attack_type == 'badclip':
-        imagenet_root = os.path.expanduser('~/imagenet_official')  # đổi path nếu cần
+        imagenet_root = os.path.expanduser('~/imagenet_official')
 
         # backdoor / poison in train split
         shadow_data = utils.ImageNet_BACKDOOR_BadCLIP(

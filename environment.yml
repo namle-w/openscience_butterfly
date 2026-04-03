@@ -272,4 +272,3 @@ dependencies:
       - wcwidth==0.6.0
       - werkzeug==3.1.7
       - yarl==1.23.0
-prefix: /home/s222576762/.conda/envs/butterfly_env
