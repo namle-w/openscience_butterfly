@@ -14,13 +14,13 @@ from torchvision.datasets import CIFAR10, GTSRB, SVHN
 from PIL import Image
 import random
 from einops import repeat, rearrange
-from BadCLIP.backdoor.utils import apply_trigger
+from third_party.BadCLIP.backdoor.utils import apply_trigger
 from torchmetrics.functional import pairwise_euclidean_distance
 from torch.utils.data import Subset
 import copy
 from typing import List, Dict, Tuple
 from torch.utils.data import Dataset, DataLoader
-from INACTIVE.optimize_filter.tiny_network import U_Net_tiny
+from third_party.INACTIVE.optimize_filter.tiny_network import U_Net_tiny
 from torchvision.transforms.functional import normalize as tv_normalize
 
 

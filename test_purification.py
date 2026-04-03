@@ -18,25 +18,25 @@ from pyod.models.pca import PCA
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import Subset
-from SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
+from third_party.SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
 # from ASSET.models import *
 # from ASSET.new_poi_util import *
-from CTRL.methods import set_model
-from CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
-from CTRL.utils.frequency import PoisonFre
-from DRUPE.models.simclr_model import SimCLR
-from DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
-from DECREE.imagenet import getBackdoorImageNet, get_processing
-from DECREE.models import get_encoder_architecture_usage
-from BadCLIP.pkgs.openai.clip import load as load_model
+from third_party.CTRL.methods import set_model
+from third_party.CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
+from third_party.CTRL.utils.frequency import PoisonFre
+from third_party.DRUPE.models.simclr_model import SimCLR
+from third_party.DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
+# from DECREE.imagenet import getBackdoorImageNet, get_processing
+# from DECREE.models import get_encoder_architecture_usage
+from third_party.BadCLIP.pkgs.openai.clip import load as load_model
 from utils import create_torch_dataloader, NeuralNet, net_train, net_test, predict_feature, MAE_test, MAE_error
 from utils import register_hooks, fetch_activation, get_dis_sort, getDefenseRegion, getLayerRegionDistance, aggregate_by_all_layers, split_dataloader, amplify_model, insert_scaling
 import utils
 import copy
 from tqdm import tqdm
-from INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
+from third_party.INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
 from sklearn.metrics import roc_auc_score, roc_curve, auc
 import matplotlib.pyplot as plt
 import pickle
@@ -579,6 +579,29 @@ if __name__ == '__main__':
     print(f"backdoored inputs shape: {backdoored_ranking_inputs.shape}")
 
     ##################
+    
+    X = np.concatenate((clean_ranking_inputs, backdoored_ranking_inputs), axis=0)
+    y = np.array([0] * len(clean_ranking_inputs) + [1] * len(backdoored_ranking_inputs))
+
+    y_test_scores = pca.decision_function(X)
+    df = pd.DataFrame({'errors': y_test_scores, 'bd_label': y})
+    print('df shapes', df.shape)
+
+    threshold1 = df['errors'].median()
+    df['pred'] = df['errors'] > threshold1
+    print("threshold:", threshold1, ".  sample detection accuracy", np.sum(df['pred'] == df['bd_label']) / len(df))
+
+    threshold2 = df['errors'].mean()
+    df['pred'] = df['errors'] > threshold2
+    print("threshold:", threshold2, ".  sample detection accuracy", np.sum(df['pred'] == df['bd_label']) / len(df))
+
+    threshold3 = df['errors'].quantile(.9)
+    df['pred'] = df['errors'] > threshold3
+    print("threshold:", threshold3, ".  sample detection accuracy", np.sum(df['pred'] == df['bd_label']) / len(df))
+
+    threshold4 = df['errors'].quantile(1 - args.poison_rate)
+    df['pred'] = df['errors'] > threshold4
+    print("threshold:", threshold4, ".  sample detection accuracy", np.sum(df['pred'] == df['bd_label']) / len(df))
     # --------------------------------------------------
     # Load threshold learned/saved from train purification
     # --------------------------------------------------
@@ -589,6 +612,7 @@ if __name__ == '__main__':
     print(f"[+] Loaded train purification threshold from {threshold_path}")
     print(f"[+] Threshold used for test purification: {threshold:.6f}")
 
+    threshold = threshold1
     # Score test clean and test backdoor separately
     y_clean_pred = pca.decision_function(clean_ranking_inputs)
     y_backdoor_pred = pca.decision_function(backdoored_ranking_inputs)

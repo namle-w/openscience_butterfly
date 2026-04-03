@@ -18,18 +18,16 @@ from pyod.models.pca import PCA
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import Subset
-from INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
+from third_party.INACTIVE.datasets import get_dataset_evaluation, get_shadow_dataset
 from torchvision import datasets, transforms
 # from ASSET.models import *
 # from ASSET.new_poi_util import *
-from CTRL.methods import set_model
-from CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
-from CTRL.utils.frequency import PoisonFre
-from DRUPE.models.simclr_model import SimCLR
-from DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
-from DECREE.imagenet import getBackdoorImageNet, get_processing
-from DECREE.models import get_encoder_architecture_usage
-from BadCLIP.pkgs.openai.clip import load as load_model
+from third_party.CTRL.methods import set_model
+from third_party.CTRL.loaders.diffaugment import set_aug_diff, PoisonAgent
+from third_party.CTRL.utils.frequency import PoisonFre
+from third_party.DRUPE.models.simclr_model import SimCLR
+from third_party.DRUPE.datasets.cifar10_dataset import get_shadow_cifar10
+from third_party.BadCLIP.pkgs.openai.clip import load as load_model
 from utils import create_torch_dataloader, NeuralNet, net_train, net_test, predict_feature, MAE_test, MAE_error
 from utils import register_hooks, fetch_activation, get_dis_sort, getDefenseRegion, getLayerRegionDistance, aggregate_by_all_layers, split_dataloader, amplify_model
 import utils
@@ -42,9 +40,9 @@ import pickle
 import pandas as pd
 import numpy as np
 import random
-from SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
-from SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
+from third_party.SSL_backdoor_BLTO.Trigger.Generator_from_TTA import GeneratorResnet
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models import get_model, get_backbone
+from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import SimCLR as SimCLR_BLTO
 from utils import *
 
 
@@ -444,20 +442,6 @@ if __name__ == '__main__':
     # 5. This part is for baseline evaluation (ba, asr)
     # after-cleanse
     ########################################################
-    if args.attack_type == 'badencoder':
-        tag = 'badencoder_len50_nb1_id' + '_' + str(args.no_amplification) # args.tag
-    elif args.attack_type == 'drupe':
-        tag = 'drupe_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    elif args.attack_type == 'inactive':
-        tag = 'inactive_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    elif args.attack_type == 'ctrl':
-        tag = 'ctrl_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    elif args.attack_type == 'blto':
-        tag = 'blto_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
-    elif args.attack_type == 'clip':
-        tag = 'clip_len500_nb5_id' + '_' + str(args.no_amplification)  # args.tag
-    elif args.attack_type == 'badclip':
-        tag = 'badclip_len50_nb1_id' + '_' + str(args.no_amplification)  # args.tag
 
     subset_len = int(args.train_subset_ratio * 50000)    
     tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
@@ -510,7 +494,8 @@ if __name__ == '__main__':
         else:
             acc3 = (num[0] * acc2) / (num[0] + num[1])
 
-        ba_acc.append(acc1_eff)
+        # ba_acc.append(acc1_eff)
+        ba_acc.append(acc1_kept)
         asr_acc.append(acc3)
 
     result_record['ca_def'].append(ba_acc)
@@ -528,9 +513,9 @@ if __name__ == '__main__':
     print("ASR best:", max(asr_acc))
 
     print("BA best:", max(ba_acc), "ASR best:", max(asr_acc))
-    with open('./plot_result/downstm_att{}_pr{}.pkl'.format(args.attack_type, args.poison_rate),
-              'wb') as f:  # open a text file
-        pickle.dump(result_record, f)  # serialize the list
+    # with open('./plot_result/downstm_att{}_pr{}.pkl'.format(args.attack_type, args.poison_rate),
+    #           'wb') as f:  # open a text file
+    #     pickle.dump(result_record, f)  # serialize the list
     ########################################################
     # End of 5
     ########################################################
