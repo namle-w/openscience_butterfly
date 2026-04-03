@@ -1,9 +1,14 @@
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+CURRENT_DIR = Path(__file__).resolve().parent
+THIRD_PARTY_DIR = CURRENT_DIR / "third_party"
+
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+if str(THIRD_PARTY_DIR) not in sys.path:
+    sys.path.insert(0, str(THIRD_PARTY_DIR))
+
 
 import argparse
 import copy

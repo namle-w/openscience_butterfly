@@ -1,5 +1,13 @@
-import sys, os
-sys.path.append(os.path.abspath(os.path.join(__file__, '..', '..')))
+import sys
+from pathlib import Path
+
+CURRENT_DIR = Path(__file__).resolve().parent
+THIRD_PARTY_DIR = CURRENT_DIR / "third_party"
+
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+if str(THIRD_PARTY_DIR) not in sys.path:
+    sys.path.insert(0, str(THIRD_PARTY_DIR))
 
 import pickle
 import os
