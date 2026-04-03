@@ -4,6 +4,7 @@ from pathlib import Path
 CURRENT_DIR = Path(__file__).resolve().parent
 THIRD_PARTY_DIR = CURRENT_DIR / "third_party"
 
+# Thêm cả thư mục gốc và thư mục third_party vào sys.path
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 if str(THIRD_PARTY_DIR) not in sys.path:
