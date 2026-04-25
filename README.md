@@ -1,5 +1,5 @@
 # 🦋 BUTTERFLY
-## Robust Backdoor Detection for Pretrained Vision Encoders via Reference Frame Transformations
+## Input-Level Backdoor Detection for Pretrained Contrastive Vision Encoders via Reference-Frame Transformations
 
 This repository contains the code and selected artifacts for **BUTTERFLY**, an input-level backdoor detector for pretrained vision encoders.
 
