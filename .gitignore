@@ -11,7 +11,8 @@ outputs/
 logs/
 wandb/
 .cache/
-
+debug_poisoned_images/
+test.py
 # *.pt
 # *.pth
 # *.ckpt

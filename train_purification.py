@@ -54,6 +54,94 @@ import numpy as np
 import random
 from utils import *
 
+class PartiallyPoisonedIndexedDataset(Dataset):
+    """
+    Dataset lấy dữ liệu theo source_indices từ clean_dataset, nhưng thay một phần
+    local indices bằng sample tương ứng từ poisoned_dataset.
+
+    Giả định clean_dataset và poisoned_dataset có cùng thứ tự index gốc.
+    """
+    def __init__(self, clean_dataset, poisoned_dataset, source_indices, poison_rate=0.01, seed=0):
+        if len(clean_dataset) != len(poisoned_dataset):
+            raise ValueError(
+                f"clean_dataset và poisoned_dataset phải cùng size, "
+                f"nhưng nhận {len(clean_dataset)} và {len(poisoned_dataset)}"
+            )
+
+        self.clean_dataset = clean_dataset
+        self.poisoned_dataset = poisoned_dataset
+        self.source_indices = list(source_indices)
+        self.poison_rate = poison_rate
+        self.seed = seed
+
+        n = len(self.source_indices)
+        if n == 0:
+            raise ValueError("source_indices rỗng, không thể tạo downstream dataset")
+
+        n_poison = int(math.ceil(n * poison_rate)) if poison_rate > 0 else 0
+        n_poison = min(n, n_poison)
+
+        rng = np.random.RandomState(seed)
+        self.poisoned_local_indices = set(
+            rng.choice(n, size=n_poison, replace=False).tolist()
+        ) if n_poison > 0 else set()
+
+    def __len__(self):
+        return len(self.source_indices)
+
+    def __getitem__(self, idx):
+        source_idx = self.source_indices[idx]
+        if idx in self.poisoned_local_indices:
+            return self.poisoned_dataset[source_idx]
+        return self.clean_dataset[source_idx]
+
+    @property
+    def poisoned_source_indices(self):
+        return [self.source_indices[i] for i in sorted(self.poisoned_local_indices)]
+
+
+def build_downstream_from_clean_test_split(
+    test_data_clean,
+    test_data_backdoor,
+    poison_rate=0.01,
+    drop_first_n=20,
+    seed=0,
+):
+    """
+    Chia test_data_clean thành 2 nửa:
+      - Nửa đầu: bỏ drop_first_n sample đầu tiên, giữ lại như clean_first_half_minus_drop
+      - Nửa sau: poison poison_rate sample bằng cách lấy item cùng index từ test_data_backdoor
+                và dùng nửa sau này làm downstream dataset
+    """
+    n_test = len(test_data_clean)
+    if n_test != len(test_data_backdoor):
+        raise ValueError(
+            f"test_data_clean và test_data_backdoor phải cùng size, "
+            f"nhưng nhận {n_test} và {len(test_data_backdoor)}"
+        )
+
+    split_idx = n_test // 2
+
+    first_half_indices = list(range(0, split_idx))
+    first_half_minus_drop_indices = first_half_indices[drop_first_n:]
+    second_half_indices = list(range(split_idx, n_test))
+
+    clean_first_half_minus_drop = Subset(test_data_clean, first_half_minus_drop_indices)
+    downstream_data = PartiallyPoisonedIndexedDataset(
+        clean_dataset=test_data_clean,
+        poisoned_dataset=test_data_backdoor,
+        source_indices=second_half_indices,
+        poison_rate=poison_rate,
+        seed=seed,
+    )
+
+    return (
+        downstream_data,
+        clean_first_half_minus_drop,
+        first_half_minus_drop_indices,
+        second_half_indices,
+    )
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='train decoder detector on the given backdoored encoder')
@@ -185,7 +273,7 @@ if __name__ == '__main__':
         1 / 0
     backdoored_encoder.eval()
 
-    subset_len = int(args.train_subset_ratio * 50000)    
+    subset_len = 20 
     tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
     result_dir = './BUTTERFLY_results/' + tag
     
@@ -395,19 +483,53 @@ if __name__ == '__main__':
     ########################################################
 
     ########################################################
-    # 3. This part is to determine data loader
-    # downstream_train = shadow
-    # downstream_test_backdoor = test_data_backdoor (100% of poisoned samples)
-    # downstream_test_clean = test_data_clean
+    # 3. This part is to determine downstream data loader
+    # downstream_train không lấy shadow_data nữa.
+    # Thay vào đó:
+    #   - Chia test_data_clean thành 2 nửa.
+    #   - Nửa đầu bỏ 20 samples đầu tiên và giữ riêng để tránh overlap nếu cần dùng sau.
+    #   - Nửa sau được poison 1% bằng sample cùng index từ test_data_backdoor.
+    #   - Nửa sau đã poison 1% là downstream dataset.
     ########################################################
-    print("size of shadow_data", len(shadow_data))
+    downstream_poison_rate = 0.01
+    downstream_drop_first_n = 20
+    downstream_seed = 0
+
+    (
+        downstream_data,
+        clean_first_half_minus20,
+        clean_first_half_minus20_indices,
+        downstream_source_indices,
+    ) = build_downstream_from_clean_test_split(
+        test_data_clean=test_data_clean,
+        test_data_backdoor=test_data_backdoor,
+        poison_rate=downstream_poison_rate,
+        drop_first_n=downstream_drop_first_n,
+        seed=downstream_seed,
+    )
+
     print("size of test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
-    downstrm_train_dataloader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=False, num_workers=16,
+    print("size of clean first half after dropping first 20 samples", len(clean_first_half_minus20))
+    print("size of downstream_data second half with 1% poison", len(downstream_data))
+    print("number of poisoned samples in downstream_data", len(downstream_data.poisoned_local_indices))
+    print("downstream poison rate", len(downstream_data.poisoned_local_indices) / len(downstream_data))
+
+    # Lưu mapping để biết downstream local index tương ứng với index gốc nào trong test set.
+    downstream_indices_path = os.path.join(result_dir, f'{args.attack_type}_downstream_source_indices.pt')
+    downstream_poison_indices_path = os.path.join(result_dir, f'{args.attack_type}_downstream_poisoned_source_indices.pt')
+    torch.save(torch.tensor(downstream_source_indices, dtype=torch.long), downstream_indices_path)
+    torch.save(torch.tensor(downstream_data.poisoned_source_indices, dtype=torch.long), downstream_poison_indices_path)
+    print("Downstream source indices saved to:", downstream_indices_path)
+    print("Downstream poisoned source indices saved to:", downstream_poison_indices_path)
+
+    downstrm_train_dataloader = DataLoader(downstream_data, batch_size=args.batch_size, shuffle=False, num_workers=16,
                                            pin_memory=True, drop_last=False)
-    downstrm_test_backdoor_dataloader = DataLoader(test_data_backdoor, batch_size=args.batch_size, shuffle=False,
-                                                   num_workers=16, pin_memory=True, drop_last=False)
-    downstrm_test_clean_dataloader = DataLoader(test_data_clean, batch_size=args.batch_size, shuffle=False,
-                                                num_workers=16, pin_memory=True, drop_last=False)
+    
+    
+    # downstrm_test_backdoor_dataloader = DataLoader(test_data_backdoor, batch_size=args.batch_size, shuffle=False,
+    #                                                num_workers=16, pin_memory=True, drop_last=False)
+    # downstrm_test_clean_dataloader = DataLoader(test_data_clean, batch_size=args.batch_size, shuffle=False,
+    #                                             num_workers=16, pin_memory=True, drop_last=False)
     ########################################################
     # End of 3
     ########################################################

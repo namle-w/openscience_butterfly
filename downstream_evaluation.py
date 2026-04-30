@@ -75,23 +75,147 @@ def split_dataloader(loader, ratio: float):
         sub_loaders.append(sub_loader)
     return sub_loaders
 
-def sift_dataset_for_ted(backdoored_encoder, dataset, cln_idxs):
+
+def to_int_list(idxs):
+    """Convert torch/numpy/list indices to a plain Python list[int]."""
+    if isinstance(idxs, torch.Tensor):
+        idxs = idxs.detach().cpu().numpy()
+    if isinstance(idxs, np.ndarray):
+        idxs = idxs.reshape(-1).tolist()
+    return [int(x) for x in list(idxs)]
+
+
+def load_index_file(path, name):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Missing {name} index file: {path}")
+    idxs = to_int_list(torch.load(path, weights_only=False))
+    print(f"[+] Loaded {name}: {len(idxs)} indices from {path}")
+    return idxs
+
+
+def validate_indices(idxs, dataset_len, name):
+    if len(idxs) == 0:
+        print(f"[!] {name} is empty.")
+        return
+    min_idx, max_idx = min(idxs), max(idxs)
+    if min_idx < 0 or max_idx >= dataset_len:
+        raise IndexError(
+            f"{name} index out of range for dataset length {dataset_len}: "
+            f"min={min_idx}, max={max_idx}"
+        )
+
+
+class PartiallyPoisonedIndexedDataset(Dataset):
+    """
+    Dataset cho downstream fine-tune:
+      - source_indices xác định local dataset lấy từ test split gốc.
+      - Các source index nằm trong poisoned_source_indices sẽ lấy từ test_data_backdoor.
+      - Các source index còn lại lấy từ test_data_clean.
+
+    Điều này giúp evaluation code khôi phục đúng downstream dataset đã dùng ở bước trước,
+    thay vì quay lại dùng shadow_data.
+    """
+    def __init__(
+        self,
+        clean_dataset,
+        poisoned_dataset,
+        source_indices,
+        poison_rate=0.01,
+        seed=0,
+        poisoned_source_indices=None,
+    ):
+        if len(clean_dataset) != len(poisoned_dataset):
+            raise ValueError(
+                f"clean_dataset và poisoned_dataset phải cùng size, "
+                f"nhưng nhận {len(clean_dataset)} và {len(poisoned_dataset)}"
+            )
+
+        self.clean_dataset = clean_dataset
+        self.poisoned_dataset = poisoned_dataset
+        self.source_indices = to_int_list(source_indices)
+        self.seed = seed
+        self.poison_rate = poison_rate
+
+        n = len(self.source_indices)
+        if n == 0:
+            raise ValueError("source_indices rỗng, không thể tạo downstream dataset")
+
+        if poisoned_source_indices is not None:
+            poisoned_source_set = set(to_int_list(poisoned_source_indices))
+            self.poisoned_local_indices = {
+                local_i
+                for local_i, src_i in enumerate(self.source_indices)
+                if src_i in poisoned_source_set
+            }
+        else:
+            n_poison = int(math.ceil(n * poison_rate)) if poison_rate > 0 else 0
+            n_poison = min(n, n_poison)
+            rng = np.random.RandomState(seed)
+            self.poisoned_local_indices = set(
+                rng.choice(n, size=n_poison, replace=False).tolist()
+            ) if n_poison > 0 else set()
+
+    def __len__(self):
+        return len(self.source_indices)
+
+    def __getitem__(self, idx):
+        source_idx = self.source_indices[int(idx)]
+        if int(idx) in self.poisoned_local_indices:
+            return self.poisoned_dataset[source_idx]
+        return self.clean_dataset[source_idx]
+
+    @property
+    def poisoned_source_indices(self):
+        return [self.source_indices[i] for i in sorted(self.poisoned_local_indices)]
+
+
+def build_default_split_indices(n_test, drop_first_n=20):
+    """
+    Split được dùng bởi 2 code trước:
+      - eval: nửa đầu của test_data_clean/test_data_backdoor, bỏ 20 sample đầu.
+      - train/downstream: nửa sau của test set.
+    """
+    split_idx = n_test // 2
+    eval_source_indices = list(range(drop_first_n, split_idx))
+    downstream_source_indices = list(range(split_idx, n_test))
+    return eval_source_indices, downstream_source_indices
+
+
+def get_input_size_from_loader(loader):
+    if len(loader.dataset) == 0:
+        raise ValueError("Training loader rỗng nên không thể xác định input_size.")
+    first_batch = next(iter(loader))
+    return first_batch[0].shape[1]
+
+
+def sift_dataset_for_ted(backdoored_encoder, dataset, kept_idxs, batch_size):
+    kept_idxs = to_int_list(kept_idxs)
+    validate_indices(kept_idxs, len(dataset), "kept_idxs")
+
     N = len(dataset)
     all_idxs = set(range(N))
-    clean_idxs_set = set(cln_idxs)
-    poi_idxs = sorted(all_idxs - clean_idxs_set)
-    cln_dataset = torch.utils.data.Subset(dataset, cln_idxs)
-    if len(cln_idxs) == 0:
+    kept_idxs_set = set(kept_idxs)
+    removed_idxs = sorted(all_idxs - kept_idxs_set)
+    kept_dataset = torch.utils.data.Subset(dataset, kept_idxs)
+
+    if len(kept_idxs) == 0:
         empty_feats = torch.empty((0, 1))
         empty_labels = torch.empty((0,), dtype=torch.long)
-        nn_loader = create_torch_dataloader(empty_feats, empty_labels, args.batch_size)
-        return nn_loader, (0, len(poi_idxs))
-    downstrm_test_backdoor_dataloader = DataLoader(cln_dataset, batch_size=args.batch_size,
-                                                   shuffle=False, num_workers=0, pin_memory=True, drop_last=False)
-    feature_bank_backdoor, label_bank_backdoor = predict_feature(backdoored_encoder, downstrm_test_backdoor_dataloader)
-    nn_backdoor_loader = create_torch_dataloader(feature_bank_backdoor, label_bank_backdoor, args.batch_size)
-    print("After sifting, the number kept/the number sifted:", len(cln_idxs), len(poi_idxs))
-    return nn_backdoor_loader, (len(cln_idxs), len(poi_idxs))
+        nn_loader = create_torch_dataloader(empty_feats, empty_labels, batch_size)
+        return nn_loader, (0, len(removed_idxs))
+
+    kept_dataloader = DataLoader(
+        kept_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False,
+    )
+    feature_bank, label_bank = predict_feature(backdoored_encoder, kept_dataloader)
+    nn_loader = create_torch_dataloader(feature_bank, label_bank, batch_size)
+    print("After sifting, the number kept/the number sifted:", len(kept_idxs), len(removed_idxs))
+    return nn_loader, (len(kept_idxs), len(removed_idxs))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='train decoder detector on the given backdoored encoder')
@@ -105,6 +229,12 @@ if __name__ == '__main__':
     parser.add_argument('--test_mask_ratio', default=0.99, type=float, help='mask ratio for decoder in the detection time')
     parser.add_argument('--no_amplification', action='store_true', default=False)
     parser.add_argument('--train_subset_ratio', type=float, default=0.0004)
+    parser.add_argument('--downstream_poison_rate', type=float, default=0.01,
+                        help='Poison rate for downstream train dataset reconstructed from second half of test_data_clean')
+    parser.add_argument('--downstream_drop_first_n', type=int, default=20,
+                        help='Drop this many samples from the first half for clean/backdoor evaluation split')
+    parser.add_argument('--downstream_seed', type=int, default=0,
+                        help='Seed used only when poisoned source index file is missing')
 
     args = parser.parse_args()
 
@@ -421,60 +551,120 @@ if __name__ == '__main__':
     ########################################################
 
     ########################################################
-    # 3. This part is to determine data loader
-    # downstream_train = shadow
-    # downstream_test_backdoor = test_data_backdoor (100% of poisoned samples)
-    # downstream_test_clean = test_data_clean
+    # 3. Rebuild downstream/evaluation datasets with the same indices as the 2 previous codes
+    #
+    # Train/fine-tune dataset:
+    #   - NOT shadow_data anymore.
+    #   - Load downstream_source_indices saved by the previous downstream split code.
+    #   - Rebuild the second half of test_data_clean with 1% poisoned samples.
+    #   - Apply idx_train_inliers on this rebuilt downstream dataset.
+    #
+    # Evaluation datasets:
+    #   - Rebuild first half of test_data_clean/test_data_backdoor after dropping first 20 samples.
+    #   - Apply idx_clean_inliers and idx_backdoor_inliers from the detector evaluation code.
     ########################################################
-    print("size of shadow_data", len(shadow_data))
-    print("size of test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
-    downstrm_train_dataloader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=False, num_workers=0,
-                                           pin_memory=True, drop_last=False)
-    downstrm_test_backdoor_dataloader = DataLoader(test_data_backdoor, batch_size=args.batch_size, shuffle=False,
-                                                   num_workers=0, pin_memory=True, drop_last=False)
-    downstrm_test_clean_dataloader = DataLoader(test_data_clean, batch_size=args.batch_size, shuffle=False,
-                                                num_workers=0, pin_memory=True, drop_last=False)
-    feature_bank_training, label_bank_training = predict_feature(backdoored_encoder, downstrm_train_dataloader)
-    feature_bank_testing, label_bank_testing = predict_feature(backdoored_encoder, downstrm_test_clean_dataloader)
-    feature_bank_backdoor, label_bank_backdoor = predict_feature(backdoored_encoder, downstrm_test_backdoor_dataloader)
-    nn_train_loader = create_torch_dataloader(feature_bank_training, label_bank_training, args.batch_size)
-    nn_test_loader = create_torch_dataloader(feature_bank_testing, label_bank_testing, args.batch_size)
-    nn_backdoor_loader = create_torch_dataloader(feature_bank_backdoor, label_bank_backdoor, args.batch_size)
+    subset_len = 20
+    tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
+    result_dir = './BUTTERFLY_results/' + tag
+
+    path_tr = os.path.join(result_dir, f'{args.attack_type}_idx_train_inliers.pt')
+    path_cl = os.path.join(result_dir, f'{args.attack_type}_idx_clean_inliers.pt')
+    path_bd = os.path.join(result_dir, f'{args.attack_type}_idx_backdoor_inliers.pt')
+    path_downstream_src = os.path.join(result_dir, f'{args.attack_type}_downstream_source_indices.pt')
+    path_downstream_poison_src = os.path.join(result_dir, f'{args.attack_type}_downstream_poisoned_source_indices.pt')
+
+    idx_train_inliers = load_index_file(path_tr, 'train inliers')
+    idx_clean_inliers = load_index_file(path_cl, 'clean eval inliers')
+    idx_backdoor_inliers = load_index_file(path_bd, 'backdoor eval inliers')
+
+    if len(test_data_clean) != len(test_data_backdoor):
+        raise ValueError(
+            f"test_data_clean và test_data_backdoor phải cùng size, "
+            f"nhưng nhận {len(test_data_clean)} và {len(test_data_backdoor)}"
+        )
+
+    eval_source_indices, default_downstream_source_indices = build_default_split_indices(
+        len(test_data_clean),
+        drop_first_n=args.downstream_drop_first_n,
+    )
+
+    # Load source indices from the previous downstream split code when available.
+    # If the file is missing, fall back to deterministic second-half split so the code can still run.
+    if os.path.exists(path_downstream_src):
+        downstream_source_indices = load_index_file(path_downstream_src, 'downstream source')
+    else:
+        downstream_source_indices = default_downstream_source_indices
+        print(f"[!] Missing downstream source index file, fallback to second half split: {path_downstream_src}")
+
+    if os.path.exists(path_downstream_poison_src):
+        downstream_poisoned_source_indices = load_index_file(path_downstream_poison_src, 'downstream poisoned source')
+    else:
+        downstream_poisoned_source_indices = None
+        print(f"[!] Missing downstream poisoned source index file, fallback to seeded {args.downstream_poison_rate:.4f} poison split: {path_downstream_poison_src}")
+
+    validate_indices(downstream_source_indices, len(test_data_clean), 'downstream_source_indices')
+    validate_indices(eval_source_indices, len(test_data_clean), 'eval_source_indices')
+
+    downstream_train_data = PartiallyPoisonedIndexedDataset(
+        clean_dataset=test_data_clean,
+        poisoned_dataset=test_data_backdoor,
+        source_indices=downstream_source_indices,
+        poison_rate=args.downstream_poison_rate,
+        seed=args.downstream_seed,
+        poisoned_source_indices=downstream_poisoned_source_indices,
+    )
+    clean_eval_data = Subset(test_data_clean, eval_source_indices)
+    backdoor_eval_data = Subset(test_data_backdoor, eval_source_indices)
+
+    print("size of original test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
+    print("size of downstream train data, from second-half test split", len(downstream_train_data))
+    print("number of poisoned samples in downstream train data", len(downstream_train_data.poisoned_local_indices))
+    print("size of clean/backdoor eval data, first half minus dropped samples", len(clean_eval_data), len(backdoor_eval_data))
+
+    validate_indices(idx_train_inliers, len(downstream_train_data), 'idx_train_inliers')
+    validate_indices(idx_clean_inliers, len(clean_eval_data), 'idx_clean_inliers')
+    validate_indices(idx_backdoor_inliers, len(backdoor_eval_data), 'idx_backdoor_inliers')
+
+    nn_train_loader, num_train = sift_dataset_for_ted(
+        backdoored_encoder,
+        downstream_train_data,
+        idx_train_inliers,
+        args.batch_size,
+    )
+    nn_test_loader, num_clean = sift_dataset_for_ted(
+        backdoored_encoder,
+        clean_eval_data,
+        idx_clean_inliers,
+        args.batch_size,
+    )
+    nn_backdoor_loader, num = sift_dataset_for_ted(
+        backdoored_encoder,
+        backdoor_eval_data,
+        idx_backdoor_inliers,
+        args.batch_size,
+    )
+
+    # Full clean evaluation should also use the same first-half-minus-20 clean split,
+    # not the full original test_data_clean.
+    idx_clean_all = list(range(len(clean_eval_data)))
+    nn_test_loader_full, num_clean_full = sift_dataset_for_ted(
+        backdoored_encoder,
+        clean_eval_data,
+        idx_clean_all,
+        args.batch_size,
+    )
     ########################################################
     # End of 3
     ########################################################
-
-    
 
     ########################################################
     # 5. This part is for baseline evaluation (ba, asr)
     # after-cleanse
     ########################################################
 
-    subset_len = int(args.train_subset_ratio * 50000)    
-    tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
-    
-    result_dir = './BUTTERFLY_results/' + tag
-
-    path_bd = os.path.join(result_dir, f'{args.attack_type}_idx_backdoor_inliers.pt')
-    path_cl = os.path.join(result_dir, f'{args.attack_type}_idx_clean_inliers.pt')
-    path_tr = os.path.join(result_dir, f'{args.attack_type}_idx_train_inliers.pt')
-
-    idx_backdoor_inliers = torch.load(path_bd, weights_only=False)
-    idx_clean_inliers = torch.load(path_cl, weights_only=False)
-    idx_train_inliers = torch.load(path_tr, weights_only=False)
-
-    nn_train_loader, _ = sift_dataset_for_ted(backdoored_encoder, shadow_data, idx_train_inliers)
-    nn_test_loader, num_clean = sift_dataset_for_ted(backdoored_encoder, test_data_clean, idx_clean_inliers)
-    nn_backdoor_loader, num = sift_dataset_for_ted(backdoored_encoder, test_data_backdoor, idx_backdoor_inliers)
-    
-    # exit()
-    idx_clean_all = list(range(len(test_data_clean)))
-    nn_test_loader_full, num_clean_full = sift_dataset_for_ted(backdoored_encoder, test_data_clean, idx_clean_all)
-
     # main loop - after cleanse
     result_record = {"ca_baseline": [], "asr_baseline": [], "ca_def": [], "asr_def": []}
-    input_size = feature_bank_training.shape[1]
+    input_size = get_input_size_from_loader(nn_train_loader)
     criterion = nn.CrossEntropyLoss()
     net = NeuralNet(input_size, [512, 256], 10).cuda()
     optimizer = torch.optim.Adam(net.parameters(), lr=.01)
@@ -504,6 +694,7 @@ if __name__ == '__main__':
 
         # ba_acc.append(acc1_eff)
         ba_acc.append(acc1_kept)
+        # ba_acc.append(acc1_full)
         asr_acc.append(acc3)
 
     result_record['ca_def'].append(ba_acc)

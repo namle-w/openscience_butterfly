@@ -111,7 +111,6 @@ def main():
     elif args.attack_type == 'blto':
         args.arch = 'resnet18'
         encoder_dir = './checkpoints/blto.pth'
-        # encoder_dir = './SSL_backdoor_BLTO/Dirty_code_for_attack/outputs_airplane_eps0.125/Encoder_resnet18_epoch165.pt'
 
         checkpoint = torch.load(encoder_dir, weights_only=False)
         # vic_model = SimCLR().cuda()
@@ -188,7 +187,7 @@ def main():
     encoder = backdoored_encoder
     encoder.eval()
 
-    subset_len = int(args.train_subset_ratio * 50000)    
+    subset_len = 20
     tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
     
     print(tag)
@@ -420,6 +419,9 @@ def main():
     )
 
     ########################################################
+    test_data_clean = Subset(test_data_clean, range(20, len(test_data_clean)))
+    test_data_backdoor = Subset(test_data_backdoor, range(20, len(test_data_backdoor)))
+
     if args.attack_type == 'badnet' or args.attack_type == 'badclip':
         test_ratio = 0.01
     else:

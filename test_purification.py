@@ -183,7 +183,7 @@ if __name__ == '__main__':
         1 / 0
     backdoored_encoder.eval()
    
-    subset_len = int(args.train_subset_ratio * 50000)    
+    subset_len = 20  
     tag = f'{args.attack_type}' + '_len' + f'{subset_len}' + '_nb1_id_' + str(args.no_amplification)
     
     result_dir = './BUTTERFLY_results/' + tag
@@ -399,8 +399,19 @@ if __name__ == '__main__':
     # downstream_test_backdoor = test_data_backdoor (100% of poisoned samples)
     # downstream_test_clean = test_data_clean
     ########################################################
-    print("size of shadow_data", len(shadow_data))
-    print("size of test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
+    # print("size of shadow_data", len(shadow_data))
+    # print("size of test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
+    
+    num_test_clean = len(test_data_clean)
+    half = num_test_clean // 2
+
+    first_half_indices = list(range(20, half))
+
+    test_data_clean = Subset(test_data_clean, first_half_indices)
+    test_data_backdoor = Subset(test_data_backdoor, first_half_indices)
+    # print("Updated test_data_clean size:", len(test_data_clean))
+    
+    
     # downstrm_train_dataloader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=False, num_workers=8,
     #                                        pin_memory=True, drop_last=False)
     downstrm_test_backdoor_dataloader = DataLoader(test_data_backdoor, batch_size=args.batch_size, shuffle=False,

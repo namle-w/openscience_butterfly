@@ -69,7 +69,7 @@ python downstream_evaluation.py --attack_type ctrl
 
 ## A. Ablation on Reference Frames
 
-### Full path--force frame
+### Full path--response frame
 ```bash
 python main.py --attack_type ctrl
 python upstream_evaluation.py --attack_type ctrl
@@ -81,7 +81,7 @@ python main.py --attack_type ctrl --no_amplification
 python upstream_evaluation.py --attack_type ctrl --no_amplification
 ```
 
-### Snapshot--force frame
+### Snapshot--response frame
 ```bash
 python main.py --attack_type ctrl --num_layer_ratio 0.03
 python upstream_evaluation.py --attack_type ctrl --num_layer_ratio 0.03

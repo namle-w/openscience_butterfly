@@ -106,7 +106,6 @@ if __name__ == '__main__':
     elif args.attack_type == 'blto':
         args.arch = 'resnet18'
         encoder_dir = './checkpoints/blto.pth'
-        # encoder_dir = './SSL_backdoor_BLTO/Dirty_code_for_attack/outputs_airplane_eps0.125/Encoder_resnet18_epoch165.pt'
 
         checkpoint = torch.load(encoder_dir, weights_only=False)
         # vic_model = SimCLR().cuda()
@@ -407,21 +406,21 @@ if __name__ == '__main__':
     # ood: STL-10
     ########################################################
     # prepare training data
-    print("for in dist dataset, use shadow dataset")
     print(len(shadow_data[0]))
     # exit()
+    shadow_data = test_data_clean
     train_dataloader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
-    print("training data size:", len(train_dataloader)*args.batch_size)
-    # split id and ood data if attack type is CTRL
-    # train_dataloader, ood_train_dataloader = ood_dataset_seperate(train_dataloader, args) # invoked for ctrl
-    ########################################################
-    # End of 3
-    ########################################################
+
+    print("training data size:", len(train_dataloader) * args.batch_size)
 
     subset_len = int(args.train_subset_ratio * len(train_dataloader.dataset))
-    rest_len = len(train_dataloader.dataset) - subset_len
-    subset_dataset, _ = random_split(train_dataloader.dataset, [subset_len, rest_len])
+    subset_len = 20
+
+    subset_indices = list(range(subset_len))
+    subset_dataset = Subset(train_dataloader.dataset, subset_indices)
+
     train_dataloader = DataLoader(subset_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
     ref_loader = DataLoader(subset_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
     args.results_dir = "./BUTTERFLY_results/" + args.attack_type + '_len' + str(subset_len) + '_nb' + str(

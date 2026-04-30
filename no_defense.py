@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from pyod.models.pca import PCA
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 
@@ -38,6 +38,106 @@ from third_party.SSL_backdoor_BLTO.Dirty_code_for_attack.models.simclr import Si
 
 import utils
 from utils import *
+
+
+class MixedCleanBackdoorSubset(Dataset):
+    """
+    A downstream fine-tuning subset built from the test split.
+
+    For each selected original index, this dataset returns either:
+      - the clean sample from clean_dataset, or
+      - the poisoned sample from backdoor_dataset.
+
+    Poisoning is decided inside the selected fine-tuning subset, so the
+    effective downstream poison rate is controlled by poison_rate.
+    """
+    def __init__(self, clean_dataset, backdoor_dataset, indices, poison_rate=0.0, seed=0):
+        assert len(clean_dataset) == len(backdoor_dataset), \
+            "clean_dataset and backdoor_dataset must have the same length"
+        assert 0.0 <= poison_rate <= 1.0, \
+            "poison_rate must be in [0, 1]"
+
+        self.clean_dataset = clean_dataset
+        self.backdoor_dataset = backdoor_dataset
+        self.indices = list(indices)
+        self.poison_rate = poison_rate
+
+        num_samples = len(self.indices)
+        num_poison = int(num_samples * poison_rate)
+
+        rng = np.random.default_rng(seed)
+        if num_poison > 0:
+            poison_positions = rng.choice(num_samples, size=num_poison, replace=False)
+            self.poison_positions = set(poison_positions.tolist())
+        else:
+            self.poison_positions = set()
+
+        print("downstream train mix:")
+        print("  total:", num_samples)
+        print("  clean:", num_samples - num_poison)
+        print("  poisoned:", num_poison)
+        print("  poison_rate:", poison_rate)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, local_idx):
+        original_idx = self.indices[local_idx]
+
+        if local_idx in self.poison_positions:
+            return self.backdoor_dataset[original_idx]
+        return self.clean_dataset[original_idx]
+
+
+def build_downstream_datasets(
+    test_data_clean,
+    test_data_backdoor,
+    poison_rate,
+    split_seed=0,
+    poison_seed=0,
+    train_ratio=0.5,
+    name="",
+):
+    """
+    Split the test split into downstream fine-tuning and evaluation subsets.
+
+    The split is created per attack branch after that branch has constructed its
+    own clean and backdoored test datasets. The downstream fine-tuning subset is
+    allowed to contain a small poisoned portion controlled by poison_rate.
+    """
+    assert len(test_data_clean) == len(test_data_backdoor), \
+        f"{name}: test_data_clean and test_data_backdoor must have the same length"
+    assert 0.0 < train_ratio < 1.0, "train_ratio must be in (0, 1)"
+
+    num_test = len(test_data_clean)
+    rng = np.random.default_rng(split_seed)
+    all_indices = rng.permutation(num_test)
+
+    split_point = int(num_test * train_ratio)
+    finetune_indices = all_indices[:split_point].tolist()
+    test_indices = all_indices[split_point:].tolist()
+
+    train_dataset_downstream = MixedCleanBackdoorSubset(
+        clean_dataset=test_data_clean,
+        backdoor_dataset=test_data_backdoor,
+        indices=finetune_indices,
+        poison_rate=poison_rate,
+        seed=poison_seed,
+    )
+
+    test_dataset_clean_downstream = Subset(test_data_clean, test_indices)
+    test_dataset_backdoor_downstream = Subset(test_data_backdoor, test_indices)
+
+    prefix = f"[{name}] " if name else ""
+    print(prefix + "downstream finetune size:", len(train_dataset_downstream))
+    print(prefix + "downstream clean test size:", len(test_dataset_clean_downstream))
+    print(prefix + "downstream backdoor test size:", len(test_dataset_backdoor_downstream))
+
+    return (
+        train_dataset_downstream,
+        test_dataset_clean_downstream,
+        test_dataset_backdoor_downstream,
+    )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='train decoder detector on the given backdoored encoder')
@@ -93,7 +193,6 @@ if __name__ == '__main__':
     elif args.attack_type == 'blto':
         args.arch = 'resnet18'
         encoder_dir = './checkpoints/blto.pth'
-        # encoder_dir = './SSL_backdoor_BLTO/Dirty_code_for_attack/outputs_airplane_eps0.125/Encoder_resnet18_epoch165.pt'
 
         checkpoint = torch.load(encoder_dir, weights_only=False)
         # vic_model = SimCLR().cuda()
@@ -176,33 +275,54 @@ if __name__ == '__main__':
     ########################################################
 
     ########################################################
-    # 2. This part is to load datasets (shadow, memory, clean test, backdoored test)
-    # shadow: the entire train set with a poisoned portion (poison_rate)
-    # memory: the entire clean train set
-    # clean test: the entire clean test set *(not in use at this stage)
-    # backdoored test: the entire test set with 50% of poisoned samples *(not in use at this stage)
+    # 2. This part is to load datasets and build downstream splits
+    #
+    # New logic:
+    # - Do NOT use shadow_data as downstream training data anymore.
+    # - Each attack branch constructs its own clean and fully poisoned test sets.
+    # - Immediately inside that branch, split those test sets into:
+    #     1) downstream train / fine-tune subset
+    #     2) downstream clean evaluation subset
+    #     3) downstream poisoned evaluation subset
+    # - The downstream train subset is mixed clean + poisoned according to
+    #   args.poison_rate.
     ########################################################
-    # load corresponding datasets, if eligible
     if args.attack_type == 'badencoder' or args.attack_type == 'drupe':
         aux_args = copy.deepcopy(args)
         aux_args.data_dir = './data/cifar10/'
-        # aux_args.trigger_file = './DRUPE/trigger/trigger_pt_white_21_10_ap_replace.npz'
-        # aux_args.reference_file = './DRUPE/reference/cifar10_l0.npz'  # depending on downstream tasks
         aux_args.trigger_file = './triggers/drupe_trigger.npz'
         aux_args.reference_file = './references/drupe_reference.npz'
         aux_args.reference_label = 0
         aux_args.shadow_fraction = args.poison_rate
         aux_args.dataset = 'cifar10'
-        shadow_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=True, trigger_file=aux_args.trigger_file,
-                                             test_transform=utils.test_transform, poison_rate=args.poison_rate,
-                                             lb_flag='backdoor')
-        memory_data = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=True, trigger_file=aux_args.trigger_file,
-                                             test_transform=utils.test_transform, poison_rate=0, lb_flag='')
-        test_data_clean = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=False, trigger_file=aux_args.trigger_file,
-                                                 test_transform=utils.test_transform, poison_rate=0, lb_flag='')
-        test_data_backdoor = utils.CIFAR10_BACKDOOR(root='./data/cifar10', train=False, trigger_file=aux_args.trigger_file,
-                                                    test_transform=utils.test_transform, poison_rate=1.0,
-                                                    lb_flag='backdoor')
+
+        test_data_clean = utils.CIFAR10_BACKDOOR(
+            root='./data/cifar10',
+            train=False,
+            trigger_file=aux_args.trigger_file,
+            test_transform=utils.test_transform,
+            poison_rate=0.0,
+            lb_flag=''
+        )
+        test_data_backdoor = utils.CIFAR10_BACKDOOR(
+            root='./data/cifar10',
+            train=False,
+            trigger_file=aux_args.trigger_file,
+            test_transform=utils.test_transform,
+            poison_rate=1.0,
+            lb_flag='backdoor'
+        )
+
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
+
     elif args.attack_type == 'inactive':
         aux_args = copy.deepcopy(args)
         aux_args.data_dir = './data/cifar10/'
@@ -214,135 +334,154 @@ if __name__ == '__main__':
         aux_args.reference_file = './references/drupe_reference.npz'
         aux_args.noise = 'None'
         aux_args.dataset = 'cifar10'
-        
-        target_dataset, memory_data, test_data_clean, test_data_backdoor = get_dataset_evaluation(aux_args)
-        shadow_data = utils.inactive_poison_dataset(aux_args, memory_data, poison_rate=aux_args.poison_rate)
-        test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1)
 
-        print("shadow_data size:", len(shadow_data))
+        target_dataset, memory_data, test_data_clean, test_data_backdoor = get_dataset_evaluation(aux_args)
+        test_data_backdoor = utils.inactive_poison_dataset(aux_args, test_data_backdoor, poison_rate=1.0)
+
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
+
     elif args.attack_type == 'blto':
         aux_args = copy.deepcopy(args)
         aux_args.netG_place = './triggers/blto_trigger.pt'
-
         aux_args.data_dir = './data/cifar10/'
-        
-        EPS_VAL = 24/255
 
-        TARGET_LABEL = 0 # Truck
-        
+        EPS_VAL = 24 / 255
+        TARGET_LABEL = 0  # Truck
+
         print(f"Loading Generator from: {aux_args.netG_place}")
-        netG = GeneratorResnet().to("cuda") 
+        netG = GeneratorResnet().to("cuda")
         ckpt = torch.load(aux_args.netG_place, map_location="cuda")
         netG.load_state_dict(ckpt["state_dict"])
-        netG.eval() 
+        netG.eval()
 
-        from torchvision.datasets import CIFAR10
-        shadow_data = CIFAR10(root='./data/cifar10', train=True, download=True, 
-                              transform=to_tensor_only)
-        
-        test_data_clean_base = CIFAR10(root='./data/cifar10', train=False, download=True,
-                                       transform=to_tensor_only)
-        
-        test_data_backdoor_base = CIFAR10(root='./data/cifar10', train=False, download=True,
-                                          transform=to_tensor_only)
+        test_data_clean_base = CIFAR10(
+            root='./data/cifar10',
+            train=False,
+            download=True,
+            transform=to_tensor_only
+        )
+        test_data_backdoor_base = CIFAR10(
+            root='./data/cifar10',
+            train=False,
+            download=True,
+            transform=to_tensor_only
+        )
 
-        shadow_data = PoisonAndNormalizeWrapper(shadow_data, netG, poison_ratio=args.poison_rate, eps=EPS_VAL,
-                                                normalize_fn=normalize_fn, target_label=TARGET_LABEL, relabel=True,
-                                                seed=0)
+        test_data_clean = PoisonAndNormalizeWrapper(
+            test_data_clean_base,
+            netG,
+            poison_ratio=0.0,
+            eps=EPS_VAL,
+            normalize_fn=normalize_fn,
+            seed=0
+        )
+        test_data_backdoor = PoisonAndNormalizeWrapper(
+            test_data_backdoor_base,
+            netG,
+            poison_ratio=1.0,
+            eps=EPS_VAL,
+            normalize_fn=normalize_fn,
+            target_label=TARGET_LABEL,
+            relabel=True,
+            seed=0
+        )
 
-        test_data_clean = PoisonAndNormalizeWrapper(test_data_clean_base, netG, poison_ratio=0.0, eps=EPS_VAL,
-                                                    normalize_fn=normalize_fn, seed=0)
-
-        test_data_backdoor = PoisonAndNormalizeWrapper(test_data_backdoor_base, netG, poison_ratio=1.0, eps=EPS_VAL,
-                                                       normalize_fn=normalize_fn, target_label=TARGET_LABEL, relabel=True,
-                                                       seed=0)
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
 
     elif args.attack_type == 'ctrl':
-        ctrl_args.poison_ratio = args.poison_rate
+        # PoisonAgent is still needed here to construct the CTRL-specific
+        # clean test loader and poisoned test loader. The downstream train set
+        # is NOT taken from shadow_data; it is built from the split test set.
+        if args.poison_rate == 0:
+            ctrl_args.poison_ratio = 0.1
+        else:
+            ctrl_args.poison_ratio = args.poison_rate
+
         train_loader, train_sampler, train_dataset, ft_loader, ft_sampler, test_loader, test_dataset, memory_loader, train_transform, ft_transform, test_transform = set_aug_diff(ctrl_args)
-        poison_frequency_agent = PoisonFre(ctrl_args, ctrl_args.size, ctrl_args.channel, ctrl_args.window_size, ctrl_args.trigger_position, False, True)
-        poison = PoisonAgent(ctrl_args, poison_frequency_agent, train_dataset, test_dataset, memory_loader, ctrl_args.magnitude)
-        shadow_data = poison.train_pos_loader.dataset
-        test_loader = poison.test_loader
-        test_pos_loader = poison.test_pos_loader
+        poison_frequency_agent = PoisonFre(
+            ctrl_args,
+            ctrl_args.size,
+            ctrl_args.channel,
+            ctrl_args.window_size,
+            ctrl_args.trigger_position,
+            False,
+            True
+        )
+        poison = PoisonAgent(
+            ctrl_args,
+            poison_frequency_agent,
+            train_dataset,
+            test_dataset,
+            memory_loader,
+            ctrl_args.magnitude
+        )
 
-        test_data_clean = test_loader.dataset
-        test_data_backdoor = test_pos_loader.dataset
-        memory_data = memory_loader.dataset
+        test_data_clean = utils.DummyDataset(poison.test_loader.dataset, transform=utils.test_transform)
+        test_data_backdoor = utils.DummyDataset(poison.test_pos_loader.dataset, transform=utils.test_transform)
 
-        shadow_data = utils.DummyDataset(shadow_data, transform=utils.test_transform)
-        memory_data = utils.DummyDataset(memory_data, transform=utils.test_transform)
-        test_data_clean = utils.DummyDataset(test_data_clean, transform=utils.test_transform)
-        test_data_backdoor = utils.DummyDataset(test_data_backdoor, transform=utils.test_transform)
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
 
     elif args.attack_type == 'badclip':
         imagenet_root = os.path.expanduser('~/imagenet_official')
 
-        # backdoor / poison in train split
-        shadow_data = utils.ImageNet_BACKDOOR_BadCLIP(
-            root=imagenet_root, train=True, trigger_file='',
-            test_transform=utils.clip_test_transform,
-            poison_rate=args.poison_rate, lb_flag='backdoor',
-            target_wnid='n07753592', seed=0
-        )
-
-        N = len(shadow_data)
-        rng = np.random.RandomState(0)
-        idx = rng.choice(N, size=50000, replace=False)
-        shadow_data = Subset(shadow_data, idx)
-        
-        # memory set: clean train split (no poison)
-        memory_data = utils.ImageNet_BACKDOOR_BadCLIP(
-            root=imagenet_root, train=True, trigger_file='',
-            test_transform=utils.clip_test_transform,
-            poison_rate=0.0, lb_flag='',
-            target_wnid='n07753592', seed=0
-        )
-
-        # clean test: val split, no poison
         test_data_clean = utils.ImageNet_BACKDOOR_BadCLIP(
-            root=imagenet_root, train=False, trigger_file='',
-            test_transform=utils.clip_test_transform,
-            poison_rate=0.0, lb_flag='',
-            target_wnid='n07753592', seed=0
-        )
-
-        # backdoor test: val split, poison all, relabel to banana
-        test_data_backdoor = utils.ImageNet_BACKDOOR_BadCLIP(
-            root=imagenet_root, train=False, trigger_file='',
-            test_transform=utils.clip_test_transform,
-            poison_rate=1.0, lb_flag='backdoor',
-            target_wnid='n07753592', seed=0
-        )
-    elif args.attack_type == 'badnet':
-        trigger_file = './triggers/badnets_trigger.npz'
-        imagenet_root = os.path.expanduser('~/imagenet_official')
-
-        shadow_data = utils.ImageNet_BACKDOOR_CLIP(
             root=imagenet_root,
-            train=True,
-            trigger_file=trigger_file,
-            test_transform=utils.clip_test_transform,
-            poison_rate=args.poison_rate,
-            lb_flag='backdoor',
-            target_wnid='n07753592',
-            seed=0
-        )
-        
-        N = len(shadow_data)
-        rng = np.random.RandomState(0)
-        idx = rng.choice(N, size=50000, replace=False)
-        shadow_data = Subset(shadow_data, idx)
-        memory_data = utils.ImageNet_BACKDOOR_CLIP(
-            root=imagenet_root,
-            train=True,
-            trigger_file=trigger_file,
+            train=False,
+            trigger_file='',
             test_transform=utils.clip_test_transform,
             poison_rate=0.0,
             lb_flag='',
             target_wnid='n07753592',
             seed=0
         )
+        test_data_backdoor = utils.ImageNet_BACKDOOR_BadCLIP(
+            root=imagenet_root,
+            train=False,
+            trigger_file='',
+            test_transform=utils.clip_test_transform,
+            poison_rate=1.0,
+            lb_flag='backdoor',
+            target_wnid='n07753592',
+            seed=0
+        )
+
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
+
+    elif args.attack_type == 'badnet':
+        trigger_file = './triggers/badnets_trigger.npz'
+        imagenet_root = os.path.expanduser('~/imagenet_official')
 
         test_data_clean = utils.ImageNet_BACKDOOR_CLIP(
             root=imagenet_root,
@@ -354,7 +493,6 @@ if __name__ == '__main__':
             target_wnid='n07753592',
             seed=0
         )
-
         test_data_backdoor = utils.ImageNet_BACKDOOR_CLIP(
             root=imagenet_root,
             train=False,
@@ -365,6 +503,17 @@ if __name__ == '__main__':
             target_wnid='n07753592',
             seed=0
         )
+
+        train_dataset_downstream, test_dataset_clean_downstream, test_dataset_backdoor_downstream = build_downstream_datasets(
+            test_data_clean=test_data_clean,
+            test_data_backdoor=test_data_backdoor,
+            poison_rate=args.poison_rate,
+            split_seed=0,
+            poison_seed=0,
+            train_ratio=0.5,
+            name=args.attack_type,
+        )
+
     else:
         print("invalid dataset")
         1 / 0
@@ -374,19 +523,37 @@ if __name__ == '__main__':
 
     ########################################################
     # 3. This part is to determine data loader
-    # downstream_train = shadow
-    # downstream_test_backdoor = test_data_backdoor (100% of poisoned samples)
-    # downstream_test_clean = test_data_clean
+    # downstream_train = first half of test split, mixed clean/backdoor
+    # downstream_test_clean = second half of clean test split
+    # downstream_test_backdoor = same second-half indices, but poisoned
     ########################################################
-    print("size of shadow_data", len(shadow_data))
-    print("size of test backdoor/clean", len(test_data_backdoor), len(test_data_clean))
-    downstrm_train_dataloader = DataLoader(shadow_data, batch_size=args.batch_size, shuffle=False, num_workers=0,
-                                           pin_memory=True, drop_last=False)
-    downstrm_test_backdoor_dataloader = DataLoader(test_data_backdoor, batch_size=args.batch_size, shuffle=False,
-                                                   num_workers=0, pin_memory=True, drop_last=False)
-    downstrm_test_clean_dataloader = DataLoader(test_data_clean, batch_size=args.batch_size, shuffle=False,
-                                                num_workers=0, pin_memory=True, drop_last=False)
-    
+    downstrm_train_dataloader = DataLoader(
+        train_dataset_downstream,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False
+    )
+
+    downstrm_test_backdoor_dataloader = DataLoader(
+        test_dataset_backdoor_downstream,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False
+    )
+
+    downstrm_test_clean_dataloader = DataLoader(
+        test_dataset_clean_downstream,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False
+    )
+
     b = next(iter(downstrm_test_backdoor_dataloader))
     print("BEFORE predict_feature labels head:", b[1][:16])
     print("unique:", torch.unique(b[1]))
