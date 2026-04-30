@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--seed",          type=int,   default=2025,
                         help="Random seed for reproducibility")
     parser.add_argument('--no_amplification', action='store_true', default=False)
-    parser.add_argument('--overlap', type=float, default=0.2)
+    parser.add_argument('--overlap', type=float, default=0.5)
     parser.add_argument('--scale', type=float, default=2.0)
     args = parser.parse_args()
 

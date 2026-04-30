@@ -53,7 +53,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_layer', type=int, default=12)
     parser.add_argument('--num_neighbours', type=int, default=1)
     parser.add_argument('--scale', type=float, default=2.0)
-    parser.add_argument('--overlap', type=float, default=0.2)
+    parser.add_argument('--overlap', type=float, default=0.5)
     parser.add_argument('--arch', type=str, default='resnet18')
     parser.add_argument('--traindata_type', type=str, default='id') # id: in distribution but poison as meta-data; ood: additional by choice
     parser.add_argument('--save_tag', type=str, default='')

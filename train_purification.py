@@ -154,7 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_layer_ratio', type=float, default=0.2)
     parser.add_argument('--no_amplification', action='store_true', default=False)
     parser.add_argument('--purification_ratio', type=float, default=0.01)
-    parser.add_argument('--overlap', type=float, default=0.2)
+    parser.add_argument('--overlap', type=float, default=0.5)
     parser.add_argument('--scale', type=float, default=2.0)
     parser.add_argument('--target_label', type=int, default=0)
     parser.add_argument('--train_subset_ratio', type=float, default=0.0004)

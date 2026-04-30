@@ -693,8 +693,8 @@ if __name__ == '__main__':
             acc3 = (num[0] * acc2) / (num[0] + num[1])
 
         # ba_acc.append(acc1_eff)
-        ba_acc.append(acc1_kept)
-        # ba_acc.append(acc1_full)
+        # ba_acc.append(acc1_kept)
+        ba_acc.append(acc1_full)
         asr_acc.append(acc3)
 
     result_record['ca_def'].append(ba_acc)
